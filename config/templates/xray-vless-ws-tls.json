@@ -1,0 +1,24 @@
+{
+  "_note": "Reference: VLESS over WebSocket + TLS — CDN-friendly (Cloudflare). Point the WS path behind nginx/CDN.",
+  "tag": "vless-ws-in",
+  "listen": "0.0.0.0",
+  "port": 8443,
+  "protocol": "vless",
+  "settings": {
+    "clients": [ { "id": "UUID-HERE", "email": "user01" } ],
+    "decryption": "none"
+  },
+  "streamSettings": {
+    "network": "ws",
+    "security": "tls",
+    "wsSettings": { "path": "/zeta-vless", "host": "your.domain.com" },
+    "tlsSettings": {
+      "serverName": "your.domain.com",
+      "alpn": ["h2", "http/1.1"],
+      "certificates": [
+        { "certificateFile": "/etc/zetavpn/certs/fullchain.pem", "keyFile": "/etc/zetavpn/certs/privkey.pem" }
+      ]
+    }
+  },
+  "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"] }
+}

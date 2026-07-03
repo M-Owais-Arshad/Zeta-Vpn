@@ -1,0 +1,21 @@
+[Unit]
+Description=ZetaVPN control panel (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/zetavpn/backend
+EnvironmentFile=-/opt/zetavpn/.env
+ExecStart=/opt/zetavpn/venv/bin/python -m zeta.main
+Restart=always
+RestartSec=3
+LimitNOFILE=1000000
+# The panel manages system users (useradd → /etc), services (systemctl) and writes
+# the cores' configs under /usr/local/etc/xray and /etc/sing-box, so filesystem
+# sandboxing is intentionally NOT applied here — it would break config writes and
+# account management. The proxy cores run hardened instead (see zeta-xray/singbox).
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

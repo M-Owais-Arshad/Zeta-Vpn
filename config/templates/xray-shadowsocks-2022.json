@@ -1,0 +1,17 @@
+{
+  "_note": "Reference: Shadowsocks 2022 (multi-user). Server PSK at top level; each client has its own PSK. Client userinfo = base64(method:serverPSK:userPSK).",
+  "tag": "ss2022-in",
+  "listen": "0.0.0.0",
+  "port": 8388,
+  "protocol": "shadowsocks",
+  "settings": {
+    "method": "2022-blake3-aes-128-gcm",
+    "password": "SERVER-PSK-BASE64",
+    "network": "tcp,udp",
+    "clients": [
+      { "password": "USER-PSK-BASE64", "email": "user01" }
+    ]
+  },
+  "streamSettings": { "network": "tcp" },
+  "sniffing": { "enabled": true, "destOverride": ["http", "tls"] }
+}

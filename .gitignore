@@ -1,0 +1,40 @@
+# ---- ZetaVPN ignore rules ----
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.eggs/
+
+# Runtime data (created on the server, never committed)
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Secrets & certificates
+.env
+*.pem
+*.key
+*.crt
+*.csr
+config/live/
+certs/
+secrets/
+
+# Generated core configs (rendered at runtime)
+config/xray/config.json
+config/singbox/config.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

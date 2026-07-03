@@ -1,0 +1,16 @@
+{
+  "_note": "Reference: TUIC v5 inbound for sing-box (QUIC/UDP). Client needs both uuid and password.",
+  "type": "tuic",
+  "tag": "tuic-in",
+  "listen": "::",
+  "listen_port": 8445,
+  "users": [ { "name": "user01", "uuid": "UUID-HERE", "password": "STRONG-PASSWORD" } ],
+  "congestion_control": "bbr",
+  "tls": {
+    "enabled": true,
+    "server_name": "your.domain.com",
+    "alpn": ["h3"],
+    "certificate_path": "/etc/zetavpn/certs/fullchain.pem",
+    "key_path": "/etc/zetavpn/certs/privkey.pem"
+  }
+}

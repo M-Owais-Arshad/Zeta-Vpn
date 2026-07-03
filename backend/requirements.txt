@@ -1,0 +1,17 @@
+# ZetaVPN panel — Python dependencies
+# Pinned to conservative, widely-available versions. Installed into a venv by install.sh.
+
+fastapi==0.110.3
+uvicorn[standard]==0.29.0
+SQLAlchemy==2.0.30
+pydantic==2.7.1
+pydantic-settings==2.2.1
+PyJWT==2.8.0
+bcrypt==4.1.3
+pyotp==2.9.0
+qrcode[pil]==7.4.2
+psutil==5.9.8
+Jinja2==3.1.4
+python-multipart==0.0.9
+httpx==0.27.0
+PyYAML==6.0.1

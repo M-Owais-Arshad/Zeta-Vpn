@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="ZetaVPN">
+  <defs>
+    <linearGradient id="zg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6d5efc"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="#10141f" stroke="url(#zg)" stroke-width="2.5"/>
+  <path d="M20 20 H44 L26 40 H45 V44 H20 L38 24 H20 Z" fill="url(#zg)"/>
+  <circle cx="47" cy="18" r="3" fill="#22d3ee"/>
+</svg>

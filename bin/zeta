@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# ZetaVPN command-line manager. Run `zeta` for the interactive menu, or use a
+# subcommand: status | restart | info | update | backup | expire-check | uninstall
+set -euo pipefail
+
+ZETA_HOME="${ZETA_HOME:-/opt/zetavpn}"
+if [ -f "${ZETA_HOME}/scripts/common.sh" ]; then
+  # shellcheck disable=SC1091
+  . "${ZETA_HOME}/scripts/common.sh"
+else
+  C_RESET='\033[0m'; C_CYN='\033[36m'; C_GRN='\033[32m'; C_YEL='\033[33m'; C_RED='\033[31m'; C_BOLD='\033[1m'
+  msg(){ printf "${C_CYN}::${C_RESET} %s\n" "$*"; }; ok(){ printf "${C_GRN} ✓${C_RESET} %s\n" "$*"; }
+  warn(){ printf "${C_YEL} !${C_RESET} %s\n" "$*"; }; err(){ printf "${C_RED} ✗${C_RESET} %s\n" "$*" >&2; }
+  die(){ err "$*"; exit 1; }
+fi
+
+UNITS=(zeta-panel zeta-xray zeta-singbox zeta-ws nginx ssh dropbear stunnel4)
+
+cmd_status() {
+  printf "\n${C_BOLD}ZetaVPN services${C_RESET}\n"
+  for u in "${UNITS[@]}"; do
+    if systemctl list-unit-files 2>/dev/null | grep -q "^${u}.service\|^${u}@"; then
+      state="$(systemctl is-active "$u" 2>/dev/null || echo inactive)"
+      if [ "$state" = "active" ]; then printf "  ${C_GRN}●${C_RESET} %-14s %s\n" "$u" "$state"
+      else printf "  ${C_RED}○${C_RESET} %-14s %s\n" "$u" "$state"; fi
+    fi
+  done
+  printf "\n"
+}
+
+cmd_restart() {
+  local target="${1:-all}"
+  if [ "$target" = "all" ]; then
+    msg "Restarting all ZetaVPN services"
+    for u in zeta-panel zeta-xray zeta-singbox zeta-ws nginx; do systemctl restart "$u" 2>/dev/null || true; done
+  else
+    systemctl restart "$target" && ok "restarted $target"
+  fi
+}
+
+cmd_info() {
+  [ -f "${ZETA_HOME}/.env" ] && grep -E '^ZETA_(PORT|WEB_BASE_PATH|SERVER_ADDRESS|SERVER_DOMAIN|ADMIN_USERNAME)=' "${ZETA_HOME}/.env"
+  [ -f "${ZETA_HOME}/data/initial_admin.txt" ] && { echo; cat "${ZETA_HOME}/data/initial_admin.txt"; }
+}
+
+cmd_update() {
+  msg "Updating ZetaVPN"
+  if [ -d "${ZETA_HOME}/.git" ]; then
+    git -C "$ZETA_HOME" pull --ff-only || warn "git pull failed"
+  else
+    warn "Not a git checkout — reinstalling deps only."
+  fi
+  "${ZETA_HOME}/venv/bin/pip" install --quiet -r "${ZETA_HOME}/backend/requirements.txt"
+  install -m 0644 "${ZETA_HOME}/systemd/"zeta-*.service /etc/systemd/system/ 2>/dev/null || true
+  systemctl daemon-reload
+  cmd_restart all
+  ok "Update complete"
+}
+
+cmd_backup() {
+  local out="${1:-/root/zeta-backup-$(date +%Y%m%d-%H%M%S).tar.gz}"
+  tar -czf "$out" -C "$ZETA_HOME" data .env 2>/dev/null && ok "Backup written to $out"
+}
+
+cmd_expire_check() {
+  # OS enforces login expiry via `chage -E`; here we also kill live sessions of
+  # any account whose expiry has passed.
+  local now exp exp_epoch
+  now="$(date +%s)"
+  for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd); do
+    exp="$(chage -l "$u" 2>/dev/null | awk -F: '/Account expires/ {sub(/^[ \t]+/,"",$2); print $2}')"
+    [ -z "$exp" ] || [ "$exp" = "never" ] && continue
+    exp_epoch="$(date -d "$exp" +%s 2>/dev/null)" || continue
+    if [ "$exp_epoch" -lt "$now" ]; then
+      usermod -L "$u" 2>/dev/null || true
+      pkill -KILL -u "$u" 2>/dev/null || true
+    fi
+  done
+}
+
+cmd_ssh_create() {
+  read -rp "Username: " u
+  read -rp "Password: " p
+  read -rp "Days valid [30]: " d; d="${d:-30}"
+  local exp; exp="$(date -d "+${d} days" +%Y-%m-%d)"
+  useradd -m -s /bin/false -e "$exp" "$u" && echo "${u}:${p}" | chpasswd \
+    && ok "Created SSH account '$u' (expires $exp)" || err "Failed to create account"
+  warn "Tip: create accounts from the panel to track them there too."
+}
+
+cmd_uninstall() { bash "${ZETA_HOME}/scripts/uninstall.sh"; }
+
+menu() {
+  while true; do
+    clear
+    command -v banner >/dev/null 2>&1 && banner
+    cmd_status
+    cat <<MENU
+  ${C_BOLD}ZetaVPN manager${C_RESET}
+    1) Restart a service        5) Update ZetaVPN
+    2) Restart everything       6) Backup data + config
+    3) Panel info / credentials 7) Create SSH account (quick)
+    4) Live panel logs          8) Uninstall
+    0) Exit
+MENU
+    read -rp "  Choose: " c
+    case "$c" in
+      1) read -rp "  Service name: " s; cmd_restart "$s"; read -rp "  [enter]" _ ;;
+      2) cmd_restart all; read -rp "  [enter]" _ ;;
+      3) cmd_info; read -rp "  [enter]" _ ;;
+      4) journalctl -u zeta-panel -n 60 -f ;;
+      5) cmd_update; read -rp "  [enter]" _ ;;
+      6) cmd_backup; read -rp "  [enter]" _ ;;
+      7) cmd_ssh_create; read -rp "  [enter]" _ ;;
+      8) cmd_uninstall; exit 0 ;;
+      0) exit 0 ;;
+      *) ;;
+    esac
+  done
+}
+
+case "${1:-menu}" in
+  menu|"")        menu ;;
+  status)         cmd_status ;;
+  restart)        cmd_restart "${2:-all}" ;;
+  info)           cmd_info ;;
+  update)         cmd_update ;;
+  backup)         cmd_backup "${2:-}" ;;
+  expire-check)   cmd_expire_check ;;
+  uninstall)      cmd_uninstall ;;
+  *) echo "Usage: zeta {menu|status|restart [unit]|info|update|backup|expire-check|uninstall}" ;;
+esac

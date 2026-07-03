@@ -1,0 +1,23 @@
+{
+  "_note": "Reference: Trojan over TCP + TLS — masquerades as ordinary HTTPS.",
+  "tag": "trojan-tls-in",
+  "listen": "0.0.0.0",
+  "port": 8444,
+  "protocol": "trojan",
+  "settings": {
+    "clients": [ { "password": "STRONG-PASSWORD", "email": "user01" } ],
+    "fallbacks": []
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "tls",
+    "tlsSettings": {
+      "serverName": "your.domain.com",
+      "alpn": ["h2", "http/1.1"],
+      "certificates": [
+        { "certificateFile": "/etc/zetavpn/certs/fullchain.pem", "keyFile": "/etc/zetavpn/certs/privkey.pem" }
+      ]
+    }
+  },
+  "sniffing": { "enabled": true, "destOverride": ["http", "tls"] }
+}

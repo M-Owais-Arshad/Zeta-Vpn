@@ -1,0 +1,22 @@
+{
+  "_note": "Reference: VMess over WebSocket (+TLS optional). Universally supported, good behind a CDN.",
+  "tag": "vmess-ws-in",
+  "listen": "0.0.0.0",
+  "port": 2083,
+  "protocol": "vmess",
+  "settings": {
+    "clients": [ { "id": "UUID-HERE", "email": "user01", "alterId": 0 } ]
+  },
+  "streamSettings": {
+    "network": "ws",
+    "security": "tls",
+    "wsSettings": { "path": "/zeta-vmess", "host": "your.domain.com" },
+    "tlsSettings": {
+      "serverName": "your.domain.com",
+      "certificates": [
+        { "certificateFile": "/etc/zetavpn/certs/fullchain.pem", "keyFile": "/etc/zetavpn/certs/privkey.pem" }
+      ]
+    }
+  },
+  "sniffing": { "enabled": true, "destOverride": ["http", "tls"] }
+}

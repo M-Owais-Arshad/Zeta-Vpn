@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>ZetaVPN Panel</title>
+  <link rel="icon" href="assets/img/logo.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="assets/css/zeta.css" />
+</head>
+<body>
+  <!-- ===================== Login ===================== -->
+  <div id="login-view" class="auth-wrap">
+    <div class="auth-card">
+      <div class="brand"><img class="logo" src="assets/img/logo.svg" alt="" /><span class="name">Zeta<b>VPN</b></span></div>
+      <h1>Welcome back</h1>
+      <p class="sub">Sign in to the control panel</p>
+      <form id="login-form">
+        <div class="field"><label>Username</label><input id="l-user" autocomplete="username" required /></div>
+        <div class="field"><label>Password</label><input id="l-pass" type="password" autocomplete="current-password" required /></div>
+        <div class="field"><label>2FA code <span class="muted">(if enabled)</span></label><input id="l-totp" inputmode="numeric" placeholder="123456" /></div>
+        <p id="login-err" style="color:var(--danger);font-size:13px;min-height:16px;margin:0 0 10px"></p>
+        <button class="btn primary block" type="submit">Sign in</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================== App ===================== -->
+  <div id="app-view" class="app hidden">
+    <aside class="sidebar">
+      <div class="brand"><img class="logo" src="assets/img/logo.svg" alt="" /><span class="name">Zeta<b>VPN</b></span></div>
+      <a class="nav-item active" data-view="dashboard" href="#">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+        Dashboard
+      </a>
+      <a class="nav-item" data-view="inbounds" href="#">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        Inbounds
+      </a>
+      <a class="nav-item" data-view="ssh" href="#">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>
+        SSH Accounts
+      </a>
+      <a class="nav-item" data-view="settings" href="#">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 6.6 19l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 4 12.6H3.9a2 2 0 1 1 0-4H4a1.6 1.6 0 0 0 1.5-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 11 3.9V3.9a2 2 0 1 1 4 0V4a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.6 1.6 0 0 0 20.1 11H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+        Settings
+      </a>
+      <div class="spacer"></div>
+      <a class="nav-item logout" id="logout" href="#">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        Sign out
+      </a>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <h2 id="page-title">Dashboard</h2>
+          <div class="who" id="page-sub"></div>
+        </div>
+        <div class="who">Signed in as <b id="who">—</b></div>
+      </div>
+      <div id="page"></div>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toasts"></div>
+
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>

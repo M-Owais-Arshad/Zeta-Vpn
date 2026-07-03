@@ -1,0 +1,15 @@
+{
+  "_note": "Reference: Hysteria2 inbound for sing-box (QUIC/UDP, needs a TLS cert). Excellent on lossy links.",
+  "type": "hysteria2",
+  "tag": "hy2-in",
+  "listen": "::",
+  "listen_port": 443,
+  "users": [ { "name": "user01", "password": "STRONG-PASSWORD" } ],
+  "tls": {
+    "enabled": true,
+    "server_name": "your.domain.com",
+    "alpn": ["h3"],
+    "certificate_path": "/etc/zetavpn/certs/fullchain.pem",
+    "key_path": "/etc/zetavpn/certs/privkey.pem"
+  }
+}

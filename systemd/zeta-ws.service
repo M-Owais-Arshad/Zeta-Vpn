@@ -1,0 +1,15 @@
+[Unit]
+Description=ZetaVPN SSH-over-WebSocket proxy
+After=network-online.target ssh.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/zetavpn/proxies/ws-proxy.py --listen 0.0.0.0:8880 --backend 127.0.0.1:22
+Restart=always
+RestartSec=3
+LimitNOFILE=1000000
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
