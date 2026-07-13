@@ -144,7 +144,8 @@ button { font-family: inherit; cursor: pointer; }
 .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; gap: 16px; flex-wrap: wrap; }
 .topbar h2 { margin: 0; font-size: 22px; letter-spacing: 0.2px; }
 .topbar .who { color: var(--muted); font-size: 13.5px; }
-.menu-toggle { display: none; border-color: var(--border); }
+/* Doubled class beats .icon-btn's display rule regardless of source order. */
+.icon-btn.menu-toggle { display: none; border-color: var(--border); }
 
 /* ---------- Cards / grid ---------- */
 .grid { display: grid; gap: 18px; }
@@ -246,13 +247,15 @@ button.badge:hover { filter: brightness(1.25); }
 .btn.block { width: 100%; }
 
 /* Button async-busy state: app.js adds .loading while a request is in
-   flight — spinner replaces content, double-click impossible. */
-.btn.loading { position: relative; color: transparent !important; pointer-events: none; }
-.btn.loading::after {
+   flight — spinner replaces content, double-click impossible. Applies to
+   icon buttons too (toggle/lock/restart run through the same busy()). */
+.btn.loading, .icon-btn.loading { position: relative; color: transparent !important; pointer-events: none; }
+.btn.loading::after, .icon-btn.loading::after {
   content: ""; position: absolute; width: 16px; height: 16px;
   border: 2px solid rgba(255, 255, 255, 0.35); border-top-color: #fff;
   border-radius: 50%; animation: spin 0.7s linear infinite;
 }
+.icon-btn.loading::after { width: 13px; height: 13px; }
 
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -331,7 +334,9 @@ select {
   display: flex; align-items: center; justify-content: space-between;
   padding: 20px 24px; border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 2;
-  background: inherit;
+  /* solid top-gradient color — background:inherit would re-rasterize the
+     modal gradient inside the head's own box and leave a visible seam */
+  background: #211619;
 }
 .modal-head h3 { margin: 0; font-size: 17.5px; }
 .modal-body { padding: 22px 24px; }
@@ -432,12 +437,13 @@ table.wide { min-width: 780px; }
 .legend .lg-down { background: var(--green); }
 .legend .lg-up { background: var(--red); }
 
-/* key-value rows (inbound details) */
+/* key-value rows (inbound details) — separators between rows only, so the
+   last row before a section heading never carries a stray divider */
 .kv {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--border);
+  gap: 14px; padding: 8px 0;
 }
-.kv:last-of-type { border-bottom: none; }
+.kv + .kv { border-top: 1px solid var(--border); }
 .kv .k { color: var(--muted); font-size: 13px; font-weight: 600; flex: none; }
 .kv .v { text-align: right; word-break: break-all; display: inline-flex; align-items: center; gap: 4px; }
 
@@ -511,7 +517,8 @@ input[readonly] { color: var(--muted); background: rgba(0, 0, 0, 0.2); }
     background: rgba(18, 11, 13, 0.96);
   }
   .sidebar.open { transform: none; box-shadow: var(--shadow); }
-  .menu-toggle { display: inline-flex; }
+  /* must match the base hiding rule's specificity (.icon-btn.menu-toggle) */
+  .icon-btn.menu-toggle { display: inline-flex; }
   .main { padding: 18px 16px 48px; }
   .grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
   .grid.cols-3, .grid.cols-2 { grid-template-columns: 1fr; }

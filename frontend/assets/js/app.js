@@ -104,6 +104,7 @@
       .finally(function () { btn.classList.remove("loading"); });
   }
 
+  var openModals = 0;
   function modal(opts) {
     var back = h('<div class="modal-backdrop"></div>');
     var size = opts.size === "lg" ? " lg" : "";
@@ -120,10 +121,18 @@
     if (opts.foot) $(".modal-foot", m).innerHTML = opts.foot;
     back.appendChild(m);
     $("#modal-root").appendChild(back);
+    // Keep Tab inside the dialog layer: the page behind goes inert while any
+    // modal is open (counter handles confirm-on-top-of-modal stacking).
+    openModals++;
+    $("#app-view").inert = true;
     var prevFocus = document.activeElement;
+    var closed = false;
     function close() {
+      if (closed) return;
+      closed = true;
       document.removeEventListener("keydown", onKey);
       back.remove();
+      if (--openModals <= 0) { openModals = 0; $("#app-view").inert = false; }
       if (prevFocus && prevFocus.focus) prevFocus.focus();
     }
     function onKey(e) { if (e.key === "Escape" && !opts.locked) close(); }
@@ -132,6 +141,16 @@
       back.addEventListener("click", function (e) { if (e.target === back) close(); });
       $("[data-x]", m).addEventListener("click", close);
     }
+    // Enter in a text field submits via the footer's primary button — the
+    // modal bodies aren't <form>s, so this is the whole keyboard story.
+    m.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      var t = e.target.tagName;
+      if (t !== "INPUT" && t !== "SELECT") return;
+      var foot = $(".modal-foot", m);
+      var prim = foot && foot.querySelector("[data-save],[data-yes],[data-ok],[data-close]");
+      if (prim && !prim.classList.contains("loading")) { e.preventDefault(); prim.click(); }
+    });
     // Focus the first form control so keyboard users land inside the dialog.
     var first = m.querySelector("input:not([readonly]):not([disabled]), select, textarea:not([readonly])");
     if (first) setTimeout(function () { first.focus(); }, 30);
@@ -224,6 +243,11 @@
     if (location.hash === "#" + path) renderRoute(true);
     else location.hash = path;
   }
+  // Monotonic render epoch: every navigation bumps it, and each async view
+  // checks `stale(ep)` after its awaits — a slow earlier view can no longer
+  // clobber the page (or register its timers) after the user moved on.
+  var renderEpoch = 0;
+  function stale(ep) { return ep !== renderEpoch; }
   var lastRouteKey = null;
   function renderRoute(force) {
     if (!Z.isAuthed()) return;
@@ -240,13 +264,20 @@
     clearTimers();
     var page = $("#page");
     if (fresh) page.innerHTML = r.view === "dashboard" ? skelDash() : skelTable(6);
-    VIEWS[r.view](page, r);
+    VIEWS[r.view](page, r, ++renderEpoch);
   }
   // Re-fetch + re-render current view without blanking to a skeleton (used
   // after row actions so the page doesn't flash and scroll stays put).
   function reload() {
     clearTimers();
-    VIEWS[parseRoute().view]($("#page"), parseRoute());
+    var r = parseRoute();
+    VIEWS[r.view]($("#page"), r, ++renderEpoch);
+  }
+  function errState(page, msg) {
+    page.innerHTML = emptyState(IC.info, "Couldn't load this page", msg,
+      '<button class="btn" id="retry-btn">' + IC.refresh + " Try again</button>");
+    var rb = $("#retry-btn", page);
+    if (rb) rb.onclick = function () { renderRoute(true); };
   }
 
   // ---------------- shell ----------------
@@ -302,10 +333,11 @@
   var VIEWS = {};
 
   // -------- Dashboard --------
-  VIEWS.dashboard = async function (page) {
+  VIEWS.dashboard = async function (page, route, ep) {
     setTitle("Dashboard", "Server overview & live traffic");
     var s;
-    try { s = await Z.get("/system/stats"); } catch (e) { page.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; return; }
+    try { s = await Z.get("/system/stats"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
+    if (stale(ep)) return;
 
     page.innerHTML =
       '<div class="grid cols-4" id="stat-grid">' +
@@ -466,10 +498,11 @@
   }
 
   // -------- Inbounds --------
-  VIEWS.inbounds = async function (page) {
+  VIEWS.inbounds = async function (page, route, ep) {
     setTitle("Inbounds", "Proxy listeners across Xray & sing-box");
     var list;
-    try { list = await Z.get("/inbounds"); } catch (e) { page.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; return; }
+    try { list = await Z.get("/inbounds"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
+    if (stale(ep)) return;
     var rows = list.map(function (ib) {
       var portCell = ib.internal_port
         ? ib.port + ' <span class="mono">→ lo:' + ib.internal_port + "</span>"
@@ -711,6 +744,20 @@
         if (dsn) ss.grpc = { serviceName: dsn.value };
         if (sec.value === "tls") ss.tls = { serverName: val("#d-sni", mo.root), certificateFile: val("#d-cert", mo.root), keyFile: val("#d-key", mo.root) };
         try {
+          // Switching an existing inbound to REALITY: PATCH doesn't run the
+          // server-side auto-seed (that's create-only), so mint the keypair
+          // here — mirrors _seed_reality's shape in api/inbounds.py.
+          if (isEdit && sec.value === "reality" && !ss.reality) {
+            var keys = await Z.post("/settings/reality-keypair");
+            ss.reality = {
+              privateKey: keys.privateKey,
+              publicKey: keys.publicKey,
+              shortIds: [keys.shortId],
+              dest: "www.microsoft.com:443",
+              serverNames: ["www.microsoft.com"],
+              fingerprint: "chrome",
+            };
+          }
           if (isEdit) {
             var patch = {
               remark: remark.value.trim(),
@@ -853,12 +900,13 @@
   }
 
   // Per-inbound clients
-  VIEWS.inboundClients = async function (page, route) {
+  VIEWS.inboundClients = async function (page, route, ep) {
     var ib, list;
     try {
       ib = await Z.get("/inbounds/" + route.ibId);
       list = await Z.get("/inbounds/" + route.ibId + "/clients");
-    } catch (e) { page.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; return; }
+    } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
+    if (stale(ep)) return;
     setTitle("Clients · " + (ib.remark || ib.tag), ib.protocol.toUpperCase() + " on port " + ib.port);
     var items = list.map(function (c) { return { c: c, ib: ib }; });
     var rows = items.map(function (it) { return clientRow(it.c, it.ib, false); }).join("");
@@ -885,13 +933,14 @@
   };
 
   // All clients across every inbound
-  VIEWS.clients = async function (page) {
+  VIEWS.clients = async function (page, route, ep) {
     setTitle("Clients", "Every proxy user across all inbounds");
     var ibs;
-    try { ibs = await Z.get("/inbounds"); } catch (e) { page.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; return; }
+    try { ibs = await Z.get("/inbounds"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
     var lists = await Promise.all(ibs.map(function (ib) {
       return Z.get("/inbounds/" + ib.id + "/clients").catch(function () { return []; });
     }));
+    if (stale(ep)) return;
     var items = [];
     ibs.forEach(function (ib, i) {
       lists[i].forEach(function (c) { items.push({ c: c, ib: ib }); });
@@ -918,17 +967,25 @@
             '<a class="btn primary" href="#/inbounds">Go to inbounds</a>')) +
       "</div>";
 
-    var q = $("#q-cli"); if (q) wireSearch(q, page.querySelector("tbody"));
-    var chipWrap = $("#ib-chips");
+    // One combined filter — the search box and the inbound chips both funnel
+    // through it, so neither can clobber the other's row visibility.
+    var q = $("#q-cli"), chipWrap = $("#ib-chips"), curIb = "";
+    function applyFilter() {
+      var query = q ? q.value.toLowerCase() : "";
+      page.querySelectorAll("[data-row-ib]").forEach(function (tr) {
+        var okIb = !curIb || tr.dataset.rowIb === curIb;
+        var okQ = !query || tr.textContent.toLowerCase().indexOf(query) !== -1;
+        tr.style.display = okIb && okQ ? "" : "none";
+      });
+    }
+    if (q) q.oninput = applyFilter;
     if (chipWrap) {
       chipWrap.addEventListener("click", function (e) {
         var b = e.target.closest(".tab");
         if (!b) return;
         chipWrap.querySelectorAll(".tab").forEach(function (t) { t.classList.toggle("active", t === b); });
-        var fib = b.dataset.fib;
-        page.querySelectorAll("[data-row-ib]").forEach(function (tr) {
-          tr.style.display = !fib || tr.dataset.rowIb === fib ? "" : "none";
-        });
+        curIb = b.dataset.fib;
+        applyFilter();
       });
     }
     wireClientActions(page, items, reload);
@@ -938,29 +995,46 @@
     var isEdit = !!existing;
     var gb0 = existing && existing.total_bytes ? (existing.total_bytes / 1073741824) : 0;
     gb0 = Math.round(gb0 * 100) / 100;
-    var days0 = existing && existing.expiry_time ? Math.max(0, daysLeft(existing.expiry_time)) : (isEdit ? 0 : 30);
+    // Which credential kind this inbound's protocol uses decides where a
+    // custom value must be sent — body.uuid is ignored for password-credential
+    // protocols (trojan/shadowsocks/…) and would create a non-working client.
+    var pspec = PROTOCOLS.find(function (p) { return p.key === ib.protocol; });
+    var credIsPassword = !!(pspec && pspec.credential === "password");
+    var isExpired = isEdit && existing.expiry_time && daysLeft(existing.expiry_time) < 0;
+    // Edit mode round-trips expiry as relative days, which is lossy (the
+    // backend re-anchors from "now") — so the field starts untouched and is
+    // only PATCHed if the admin actually types in it. Same for the quota.
+    var daysAttrs = isEdit
+      ? (isExpired ? ' value="" placeholder="Expired — enter days to renew"' : ' value="' + Math.max(0, daysLeft(existing.expiry_time || 0)) + '"')
+      : ' value="30"';
     var mo = modal({
       title: isEdit ? "Edit client · " + existing.email : "Add client",
       body:
         field("Email / label", '<input id="c-email" placeholder="user01" value="' + esc(existing ? existing.email : "") + '">') +
         '<div class="row">' +
-        field("Data limit (GB)", '<input id="c-gb" type="number" min="0" step="0.5" value="' + gb0 + '">', "0 = unlimited") +
-        field("Expiry (days from today)", '<input id="c-days" type="number" min="0" value="' + days0 + '">', "0 = never expires") + "</div>" +
+        field("Data limit (GB)", '<input id="c-gb" type="number" min="0" step="0.5" value="' + gb0 + '">',
+          "0 = unlimited" + (isEdit ? " · leave unchanged to keep as-is" : "")) +
+        field("Expiry (days from today)", '<input id="c-days" type="number" min="0"' + daysAttrs + ">",
+          "0 = never expires" + (isEdit ? " · leave unchanged to keep the current expiry" : "")) + "</div>" +
         '<div class="row">' +
         field("Device / IP limit", '<input id="c-ip" type="number" min="0" value="' + (existing ? existing.limit_ip : 0) + '">', "Max devices online at once · 0 = unlimited") +
         field("Comment", '<input id="c-comment" placeholder="optional" value="' + esc(existing ? existing.comment || "" : "") + '">') + "</div>" +
         (isEdit ? "" :
           '<details class="adv"><summary>Advanced</summary>' +
-          field("Custom UUID / password", '<div class="linkbox"><input id="c-uuid" placeholder="leave empty to auto-generate"><button class="btn sm" type="button" data-genuuid>Generate</button></div>') +
+          field("Custom " + (credIsPassword ? "password" : "UUID"), '<div class="linkbox"><input id="c-cred" placeholder="leave empty to auto-generate"><button class="btn sm" type="button" data-gencred>Generate</button></div>') +
           field("Subscription ID", '<input id="c-subid" placeholder="leave empty to auto-generate">', "Give two clients the same ID to bundle them into one subscription link.") +
           "</details>"),
       foot: '<button class="btn ghost" data-cancel>Cancel</button><button class="btn primary" data-save>' + (isEdit ? "Save changes" : "Create") + "</button>",
     });
-    var gen = $("[data-genuuid]", mo.root);
+    var gbDirty = false, daysDirty = false;
+    $("#c-gb", mo.root).addEventListener("input", function () { gbDirty = true; });
+    $("#c-days", mo.root).addEventListener("input", function () { daysDirty = true; });
+    var gen = $("[data-gencred]", mo.root);
     if (gen) gen.onclick = function () {
       busy(gen, async function () {
-        try { var d = await Z.get("/settings/new-uuid"); $("#c-uuid", mo.root).value = d.uuid; }
-        catch (e) { toast(e.message, "err"); }
+        try {
+          $("#c-cred", mo.root).value = credIsPassword ? genPassword() : (await Z.get("/settings/new-uuid")).uuid;
+        } catch (e) { toast(e.message, "err"); }
       });
     };
     $("[data-cancel]", mo.foot).onclick = mo.close;
@@ -968,20 +1042,22 @@
       busy(ev.currentTarget, async function () {
         var payload = {
           email: val("#c-email", mo.root),
-          total_gb: parseFloat($("#c-gb", mo.root).value) || 0,
-          expiry_days: parseInt($("#c-days", mo.root).value, 10) || 0,
           limit_ip: parseInt($("#c-ip", mo.root).value, 10) || 0,
           comment: val("#c-comment", mo.root),
         };
         if (!payload.email) { toast("Email / label is required", "err"); $("#c-email", mo.root).focus(); return; }
         try {
           if (isEdit) {
+            if (gbDirty) payload.total_gb = parseFloat($("#c-gb", mo.root).value) || 0;
+            if (daysDirty) payload.expiry_days = parseInt($("#c-days", mo.root).value, 10) || 0;
             await Z.patch("/inbounds/" + ib.id + "/clients/" + existing.id, payload);
             mo.close();
             toast('"' + payload.email + '" updated');
           } else {
-            var u = val("#c-uuid", mo.root), sid = val("#c-subid", mo.root);
-            if (u) payload.uuid = u;
+            payload.total_gb = parseFloat($("#c-gb", mo.root).value) || 0;
+            payload.expiry_days = parseInt($("#c-days", mo.root).value, 10) || 0;
+            var cred = val("#c-cred", mo.root), sid = val("#c-subid", mo.root);
+            if (cred) payload[credIsPassword ? "password" : "uuid"] = cred;
             if (sid) payload.sub_id = sid;
             await Z.post("/inbounds/" + ib.id + "/clients", payload);
             mo.close();
@@ -1094,10 +1170,11 @@
     $("[data-copyblock]", mo.root).onclick = function () { copy(block); };
   }
 
-  VIEWS.ssh = async function (page) {
+  VIEWS.ssh = async function (page, route, ep) {
     setTitle("SSH Accounts", "OpenSSH · Dropbear · SSH-over-WS/SSL");
     var list;
-    try { list = await Z.get("/ssh"); } catch (e) { page.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; return; }
+    try { list = await Z.get("/ssh"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
+    if (stale(ep)) return;
     var rows = list.map(function (a) {
       var online = a.online > 0
         ? '<span class="badge on"><span class="dot up"></span> ' + a.online + " online</span>"
@@ -1254,11 +1331,15 @@
     $("[data-cancel]", mo.foot).onclick = mo.close;
     $("[data-save]", mo.foot).onclick = function (ev) {
       busy(ev.currentTarget, async function () {
+        // isNaN (not ||) so an explicit 0 survives: 0 max_login = no session
+        // cap, 0 expiry days = never expires — both backend-supported.
+        var maxL = parseInt($("#s-max", mo.root).value, 10);
+        var expD = parseInt($("#s-days", mo.root).value, 10);
         var payload = {
           username: val("#s-user", mo.root),
           password: pass.value,
-          max_login: parseInt($("#s-max", mo.root).value, 10) || 1,
-          expiry_days: parseInt($("#s-days", mo.root).value, 10) || 30,
+          max_login: isNaN(maxL) ? 1 : maxL,
+          expiry_days: isNaN(expD) ? 30 : expD,
           comment: val("#s-comment", mo.root),
         };
         if (!payload.username || !payload.password) { toast("Username and password are required", "err"); return; }
@@ -1274,11 +1355,12 @@
   }
 
   // -------- Settings --------
-  VIEWS.settings = async function (page) {
+  VIEWS.settings = async function (page, route, ep) {
     setTitle("Settings", "Server identity, security & services");
     var s, cores = null;
-    try { s = await Z.get("/settings"); } catch (e) { page.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; return; }
+    try { s = await Z.get("/settings"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
     try { cores = await Z.get("/system/cores"); } catch (e) { /* card degrades gracefully */ }
+    if (stale(ep)) return;
     var me = window.__me || {};
     var totpOn = !!me.totp_enabled;
 
@@ -1356,8 +1438,11 @@
       busy(ev.currentTarget, async function () {
         try {
           await Z.post("/auth/change-password", { current_password: $("#pw-cur", page).value, new_password: $("#pw-new", page).value });
-          toast("Password updated");
-          $("#pw-cur", page).value = ""; $("#pw-new", page).value = "";
+          // The backend bumps token_version on password change, so the
+          // current JWT is already dead — go to login cleanly instead of
+          // letting the next request bounce with "Session expired".
+          Z.logout();
+          showLogin("Password changed — sign in with your new password.");
         } catch (e) { toast(e.message, "err"); }
       });
     };
@@ -1415,6 +1500,14 @@
   window.addEventListener("hashchange", function () { renderRoute(false); });
   document.addEventListener("DOMContentLoaded", function () {
     $("#logout").onclick = function (e) { e.preventDefault(); Z.logout(); showLogin(); };
+    // Clicking the nav item for the route you're already on fires no
+    // hashchange — force a re-render so it acts as refresh/retry (and
+    // closes the mobile drawer via renderRoute).
+    document.querySelectorAll(".nav-item[data-view]").forEach(function (n) {
+      n.addEventListener("click", function () {
+        if (location.hash === n.getAttribute("href")) renderRoute(true);
+      });
+    });
     var mt = $("#menu-toggle"), scrim = $("#scrim");
     if (mt) mt.onclick = function () {
       var open = $(".sidebar").classList.toggle("open");
