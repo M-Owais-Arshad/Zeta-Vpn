@@ -207,12 +207,14 @@ class SSHAccount(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    # bcrypt hash, not the plaintext OS password — nothing in the panel ever
-    # needs to read this back (the OS account's real password lives only in
-    # /etc/shadow); this column exists purely so a leaked DB/backup doesn't
-    # also hand out live SSH credentials in plaintext. Kept for reference
-    # (e.g. detecting a stale/lost password) rather than for programmatic use.
+    # bcrypt hash, kept for reference / stale-password detection.
     password_hash: Mapped[str] = mapped_column(String(255))
+    # Plaintext account password. This panel is single-tenant — only the VPS
+    # owner ever reaches the dashboard — and the owner wants to read the
+    # password back any time (show/copy, resend to a user), exactly like the
+    # plaintext VLESS/Trojan client credentials already stored elsewhere. NULL
+    # only for accounts created before this column existed.
+    password: Mapped[str | None] = mapped_column(String(128), nullable=True)
     max_login: Mapped[int] = mapped_column(Integer, default=1)
     expiry_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

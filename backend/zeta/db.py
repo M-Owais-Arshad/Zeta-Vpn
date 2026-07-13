@@ -46,8 +46,29 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
+def _ensure_columns() -> None:
+    """Additive migration: create_all() only creates missing *tables*, never
+    adds columns to an existing one. Add any column introduced after a DB was
+    first created (SQLite supports ALTER TABLE ADD COLUMN)."""
+    from sqlalchemy import inspect, text
+
+    wanted = {
+        "ssh_accounts": [("password", "VARCHAR(128)")],
+    }
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table, cols in wanted.items():
+            if not insp.has_table(table):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table)}
+            for name, ddl in cols:
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
 def init_db() -> None:
     """Create all tables. Import models first so they register with the metadata."""
     from . import models  # noqa: F401  (side-effect import registers tables)
 
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()

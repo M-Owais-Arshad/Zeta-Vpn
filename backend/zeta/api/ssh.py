@@ -51,6 +51,7 @@ def create_account(
     acc = SSHAccount(
         username=body.username,
         password_hash=auth_lib.hash_password(body.password),
+        password=body.password,  # stored so the owner can view/copy it later
         max_login=body.max_login,
         expiry_date=expiry,
         comment=body.comment,

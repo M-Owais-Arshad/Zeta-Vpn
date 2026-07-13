@@ -1118,12 +1118,12 @@
   // The ready-to-forward text block (like the "SGP/BLR SSH ACCOUNT" style
   // messages resellers send their users) — one button copies everything at
   // once instead of five separate fields.
-  function buildShareBlock(acc, password, host, brand) {
+  function buildShareBlock(acc, pw, host, brand) {
     return [
       "⚡ " + (brand || "ZetaVPN") + " SSH ACCOUNT",
       "Host/IP  : " + host,
       "Username : " + acc.username,
-      "Password : " + (password || "(set at creation — ask your admin)"),
+      "Password : " + (pw || "(unknown — recreate the account)"),
       "Expiry   : " + fmtExpiryPlain(acc.expiry_date),
       "Max login: " + acc.max_login,
       "OpenSSH  : " + host + ":22",
@@ -1136,23 +1136,27 @@
   async function sshInfoModal(acc, password) {
     var host = "your-server", brand = "ZetaVPN";
     try { var s = await Z.get("/settings"); host = s.server_domain || s.server_address || host; brand = s.brand || brand; } catch (e) { /* best effort */ }
+    // Real password: whatever was just typed at creation, else the stored one
+    // the API now returns (single-owner dashboard — safe to show/copy anytime).
+    var pw = password || acc.password || "";
     var portRows = SSH_PORTS.map(function (p) {
       var v = p.value(host);
       return '<div class="field slim"><label>' + esc(p.label) + "</label>" +
         '<div class="linkbox"><input readonly value="' + esc(v) + '"><button class="btn sm" data-copy="' + esc(v) + '">' + IC.copy + " Copy</button></div></div>";
     }).join("");
-    var block = buildShareBlock(acc, password, host, brand);
+    var block = buildShareBlock(acc, pw, host, brand);
+    var pwField = pw
+      ? '<div class="linkbox"><span class="input-wrap"><input id="ssh-pw" type="password" readonly value="' + esc(pw) + '">' +
+          '<button type="button" class="in-btn icon-btn" data-eye data-tip="Show / hide" aria-label="Show password">' + IC.eye + "</button></span>" +
+          '<button class="btn sm" data-copy="' + esc(pw) + '">' + IC.copy + " Copy</button></div>"
+      : '<div class="linkbox"><input readonly value="•••••• (unknown — created before passwords were stored)" disabled></div>';
     var mo = modal({
       title: "SSH connection info · " + acc.username,
       size: "lg",
-      locked: !!password, // one-time password on screen — only "Done" closes it
       body:
-        (password
-          ? '<p class="hint t-warn">Password is shown once, right now — it is not stored in a recoverable form and cannot be shown again later.</p>'
-          : '<p class="hint">Password was only shown once, at creation time — delete and recreate the account if it was lost.</p>') +
         '<div class="row">' +
           field("Username", '<div class="linkbox"><input readonly value="' + esc(acc.username) + '"><button class="btn sm" data-copy="' + esc(acc.username) + '">' + IC.copy + " Copy</button></div>") +
-          field("Password", '<div class="linkbox"><input readonly value="' + esc(password || "••••••••") + '"' + (password ? "" : " disabled") + '><button class="btn sm" data-copy="' + esc(password || "") + '"' + (password ? "" : " disabled") + ">" + IC.copy + " Copy</button></div>") +
+          field("Password", pwField) +
         "</div>" +
         '<div class="modal-sec">Server address · port (any one, depending on the app)</div>' +
         portRows +
@@ -1164,6 +1168,11 @@
     });
     $("textarea.share-block", mo.body).value = block;
     $("[data-close]", mo.foot).onclick = mo.close;
+    var eye = $("[data-eye]", mo.root);
+    if (eye) eye.onclick = function () {
+      var f = $("#ssh-pw", mo.root);
+      f.type = f.type === "password" ? "text" : "password";
+    };
     mo.root.querySelectorAll("[data-copy]").forEach(function (b) {
       b.onclick = function () { copy(b.dataset.copy); };
     });

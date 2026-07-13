@@ -236,6 +236,9 @@ class SSHAccountOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     username: str
+    # Plaintext password, shown to the (single, owner) admin so it can be
+    # copied/resent any time. None for accounts created before this existed.
+    password: str | None = None
     max_login: int
     expiry_date: datetime | None
     enabled: bool
