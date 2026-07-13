@@ -30,10 +30,15 @@ if systemctl is-active --quiet nginx; then NGINX_WAS_ACTIVE=1; systemctl stop ng
 
 if "$ACME" --issue -d "$DOMAIN" --standalone --keylength ec-256 --force; then
   mkdir -p "$ZETA_CERT_DIR"
+  # zeta-xray/zeta-singbox run as the unprivileged 'zetavpn' user and need to
+  # read these files. acme.sh's cron renewal re-runs as root and would reset
+  # ownership back to root:root, silently breaking TLS on the next renewal —
+  # the reloadcmd re-chowns on every run (initial issue and every renewal).
   "$ACME" --install-cert -d "$DOMAIN" --ecc \
     --fullchain-file "${ZETA_CERT_DIR}/fullchain.pem" \
     --key-file "${ZETA_CERT_DIR}/privkey.pem" \
-    --reloadcmd "systemctl restart zeta-xray zeta-singbox nginx 2>/dev/null || true"
+    --reloadcmd "chown zetavpn:zetavpn '${ZETA_CERT_DIR}'/*.pem 2>/dev/null; chmod 600 '${ZETA_CERT_DIR}'/*.pem 2>/dev/null; systemctl restart zeta-xray zeta-singbox nginx 2>/dev/null || true"
+  chown zetavpn:zetavpn "${ZETA_CERT_DIR}"/*.pem 2>/dev/null || true
   chmod 600 "${ZETA_CERT_DIR}/privkey.pem"
   ok "Certificate installed to ${ZETA_CERT_DIR}"
 else

@@ -18,6 +18,50 @@ apt_install nginx
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 mkdir -p /etc/nginx/conf.d
 
+# Compress the panel's text assets (JS/CSS/JSON/HTML) — meaningfully smaller
+# transfers on mobile/slow links, negligible CPU cost on a small VPS since
+# these are static files served rarely relative to proxy traffic (which
+# isn't touched — TLS proxy bytes aren't compressible anyway).
+# "gzip on;" itself is edited in-place in nginx.conf (uncommenting it if
+# needed) rather than repeated in conf.d/: recent Debian/Ubuntu ship it
+# active by default, and a second "gzip on;" in a separate file makes nginx
+# refuse to start ("directive is duplicate"); older images that ship it
+# commented-out need this sed to actually turn compression on at all.
+if grep -qE '^\s*#\s*gzip\s+on;' /etc/nginx/nginx.conf; then
+  sed -i -E 's/^(\s*)#\s*(gzip\s+on;)/\1\2/' /etc/nginx/nginx.conf
+elif ! grep -qE '^\s*gzip\s+on;' /etc/nginx/nginx.conf; then
+  sed -i '/http {/a\    gzip on;' /etc/nginx/nginx.conf
+fi
+cat > /etc/nginx/conf.d/zeta-gzip.conf <<'CONF'
+gzip_comp_level 5;
+gzip_min_length 512;
+gzip_types text/css application/javascript text/javascript application/json text/plain image/svg+xml;
+CONF
+
+# The panel (core/nginx.py) regenerates this with one `location <path> { ... }`
+# block per WS-family inbound, so every such inbound shares :80 with the
+# panel/WS-proxy instead of trying to bind it directly (which would just
+# collide with nginx). Must exist before nginx's first start or the `include`
+# below fails the whole config; the panel owns its contents from here on.
+#
+# Deliberately NOT under /etc/nginx/conf.d/: nginx.conf's own default
+# `include conf.d/*.conf;` (http-context) would ALSO pick up any *.conf file
+# placed there and parse it at the http{} level — invalid for a file of bare
+# `location {}` blocks, which are only legal inside a `server {}`. Living
+# outside conf.d/ means the only place this gets included is the explicit
+# `include` below, in the right context.
+ZETA_INBOUNDS_INCLUDE="/etc/nginx/zeta-inbounds.conf"
+rm -f /etc/nginx/conf.d/zeta-inbounds.conf  # migrate away from the old (broken) location
+[ -f "$ZETA_INBOUNDS_INCLUDE" ] || cat > "$ZETA_INBOUNDS_INCLUDE" <<'CONF'
+# Managed by ZetaVPN — regenerated whenever a WS-family inbound changes.
+CONF
+# The panel (running as 'zetavpn', not root) writes this file directly on
+# every inbound change and then asks nginx to reload via sudo — it needs
+# write access to exactly this one file, nothing else under /etc/nginx/.
+if id -u zetavpn >/dev/null 2>&1; then
+  chown zetavpn:zetavpn "$ZETA_INBOUNDS_INCLUDE"
+fi
+
 WS_LOCATION=$(cat <<CONF
     location ${WS_PATH} {
         proxy_pass http://127.0.0.1:${WS_PORT};
@@ -51,6 +95,11 @@ if [ -n "$DOMAIN" ] && [ -f "${ZETA_CERT_DIR}/fullchain.pem" ]; then
 server {
     listen 80;
     server_name ${DOMAIN};
+    # WS-family inbounds stay reachable on plain :80 even in domain/TLS mode
+    # (nginx picks the most specific matching location, so these paths win
+    # over the catch-all redirect below regardless of file order); anything
+    # else gets redirected to https as usual.
+    include ${ZETA_INBOUNDS_INCLUDE};
     location / { return 301 https://\$host\$request_uri; }
 }
 server {
@@ -70,6 +119,7 @@ else
 server {
     listen 80 default_server;
     server_name _;
+    include ${ZETA_INBOUNDS_INCLUDE};
 ${WS_LOCATION}
 ${PANEL_LOCATION}
 }

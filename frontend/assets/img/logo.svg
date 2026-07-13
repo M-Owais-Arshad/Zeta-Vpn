@@ -1,11 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="ZetaVPN">
   <defs>
-    <linearGradient id="zg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#6d5efc"/>
-      <stop offset="1" stop-color="#22d3ee"/>
+    <linearGradient id="zbolt" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#a6f542"/>
+      <stop offset="0.55" stop-color="#35e08c"/>
+      <stop offset="1" stop-color="#18cfc0"/>
+    </linearGradient>
+    <linearGradient id="zred" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff5147"/>
+      <stop offset="1" stop-color="#d81f2e"/>
     </linearGradient>
   </defs>
-  <rect x="4" y="4" width="56" height="56" rx="16" fill="#10141f" stroke="url(#zg)" stroke-width="2.5"/>
-  <path d="M20 20 H44 L26 40 H45 V44 H20 L38 24 H20 Z" fill="url(#zg)"/>
-  <circle cx="47" cy="18" r="3" fill="#22d3ee"/>
+  <!-- badge -->
+  <circle cx="32" cy="32" r="28.5" fill="#181114" stroke="#e62e3c" stroke-width="3"/>
+  <!-- signal arcs -->
+  <path d="M46.5 13.5 A 23.5 23.5 0 0 1 54.5 29" fill="none" stroke="#93262f" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M9.5 35 A 23.5 23.5 0 0 1 17.5 19.5" fill="none" stroke="#93262f" stroke-width="2.4" stroke-linecap="round"/>
+  <!-- Z glyph -->
+  <path d="M16 18 H48 L30 41 H48 V47 H16 L34 24 H16 Z" fill="url(#zred)"/>
+  <!-- lightning bolt -->
+  <path d="M37.5 7 L24.5 34.5 h6.8 L27 57 L44.5 27 h-7.2 L42 7 Z" fill="url(#zbolt)" stroke="#181114" stroke-width="2.2" stroke-linejoin="round"/>
 </svg>

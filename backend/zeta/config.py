@@ -40,7 +40,11 @@ class Settings(BaseSettings):
     frontend_dir: Path = Field(default=Path(ZETA_HOME, "frontend"))
 
     # --- Panel HTTP server ---------------------------------------------------
-    host: str = "0.0.0.0"
+    # Loopback-only: install.sh always puts nginx in front (with TLS when a
+    # domain is configured, plain HTTP on :80 otherwise) — the panel itself
+    # never needs to be reachable directly. Override ZETA_HOST if you're
+    # intentionally running without the bundled nginx.
+    host: str = "127.0.0.1"
     port: int = 2096
     # Obscured base path for the whole panel, e.g. "/zeta-a1b2c3". Empty = root.
     web_base_path: str = ""
@@ -57,6 +61,14 @@ class Settings(BaseSettings):
     # Login brute-force guard.
     login_max_attempts: int = 8
     login_lockout_seconds: int = 300
+
+    # --- Reverse proxy trust --------------------------------------------------
+    # Comma-separated IPs allowed to set X-Forwarded-For/-Proto (uvicorn's
+    # ProxyHeadersMiddleware only honours these headers when the *direct* TCP
+    # peer is in this list — e.g. the local nginx). Never "*": that lets any
+    # direct connection spoof its source IP and bypass the login brute-force
+    # lockout (keyed by IP) and falsify audit-log IPs.
+    trusted_proxies: str = "127.0.0.1,::1"
 
     # --- Public server identity (used when building client links) ------------
     # The address clients connect to. Defaults to the server's own IP at runtime.
@@ -76,6 +88,13 @@ class Settings(BaseSettings):
     singbox_bin: Path = Path("/usr/local/bin/sing-box")
     singbox_config: Path = Path("/etc/sing-box/config.json")
     singbox_service: str = "zeta-singbox"
+    # sing-box has no gRPC stats API like Xray; traffic is read from its
+    # loopback-only Clash API (/connections), which the generated config
+    # always enables. The secret is generated once per process and never
+    # exposed outside the panel (nginx doesn't proxy this port).
+    singbox_clash_api_host: str = "127.0.0.1"
+    singbox_clash_api_port: int = 9190
+    singbox_clash_api_secret: str = Field(default_factory=lambda: secrets.token_urlsafe(24))
 
     # --- Service control -----------------------------------------------------
     # "systemd" on a real server; "none" disables service control (dev/testing).
@@ -83,6 +102,13 @@ class Settings(BaseSettings):
 
     # --- Traffic accounting --------------------------------------------------
     stats_poll_seconds: int = 30
+    # Xray's access log is the only source of per-connection source IPs (the
+    # gRPC stats API only gives byte counters) — used to enforce Client.limit_ip.
+    xray_access_log: Path = Path("/var/log/zetavpn/xray-access.log")
+    # How long since last activity before a source IP is considered offline
+    # (both for the "online" badge in the UI and the limit_ip check). Backed
+    # by real traffic, not just connection age — see access_log.py.
+    ip_limit_window_seconds: int = 120
 
     @property
     def db_path(self) -> Path:

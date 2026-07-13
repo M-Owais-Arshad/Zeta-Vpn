@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -26,6 +27,12 @@ def verify_password(password: str, password_hash: str) -> bool:
         return bcrypt.checkpw(password.encode("utf-8")[:_BCRYPT_MAX], password_hash.encode("utf-8"))
     except (ValueError, TypeError):
         return False
+
+
+# A real bcrypt hash (same cost) with no matching password, so callers can
+# run a verify against it for unknown usernames — keeps a "no such user"
+# login response the same shape/timing as a "wrong password" one.
+DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
 
 
 def create_access_token(subject: str, role: str, extra: dict | None = None) -> str:
@@ -74,7 +81,7 @@ def verify_totp(secret: str, code: str) -> bool:
 class _Bucket:
     fails: int = 0
     locked_until: float = 0.0
-    stamps: list[float] = field(default_factory=list)
+    last_activity: float = 0.0
 
 
 class LoginGuard:
@@ -87,7 +94,9 @@ class LoginGuard:
         self._buckets: dict[str, _Bucket] = {}
 
     def _bucket(self, key: str) -> _Bucket:
-        return self._buckets.setdefault(key, _Bucket())
+        b = self._buckets.setdefault(key, _Bucket())
+        b.last_activity = time.monotonic()
+        return b
 
     def check(self, key: str) -> tuple[bool, int]:
         """Return (allowed, retry_after_seconds)."""
@@ -106,6 +115,21 @@ class LoginGuard:
 
     def record_success(self, key: str) -> None:
         self._buckets.pop(key, None)
+
+    def sweep_stale(self, max_age_seconds: float = 3600) -> None:
+        """Drop buckets with no recent activity and no active lockout.
+
+        Without this, an attacker cycling through spoofed IPs or random
+        usernames grows `_buckets` without bound (each failed attempt creates
+        one). Called periodically from tasks.py's existing poll loop.
+        """
+        now = time.monotonic()
+        stale = [
+            k for k, b in self._buckets.items()
+            if b.locked_until <= now and (now - b.last_activity) > max_age_seconds
+        ]
+        for k in stale:
+            self._buckets.pop(k, None)
 
 
 login_guard = LoginGuard(settings.login_max_attempts, settings.login_lockout_seconds)

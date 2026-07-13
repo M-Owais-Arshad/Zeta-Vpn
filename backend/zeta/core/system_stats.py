@@ -41,13 +41,34 @@ def snapshot() -> dict:
     }
 
 
-def net_throughput(sample_seconds: float = 1.0) -> dict:
-    """Instantaneous RX/TX rate in bytes per second (blocks ``sample_seconds``)."""
-    rx0, tx0 = _net_totals()
-    time.sleep(sample_seconds)
-    rx1, tx1 = _net_totals()
-    dt = sample_seconds or 1.0
-    return {"rx_bps": int((rx1 - rx0) / dt), "tx_bps": int((tx1 - tx0) / dt)}
+_last_net: tuple[float, int, int] | None = None  # (timestamp, rx_bytes, tx_bytes)
+
+
+def net_throughput() -> dict:
+    """RX/TX rate in bytes per second, computed from the delta since the
+    previous call — no blocking sleep.
+
+    The dashboard polls this every 2s while open (app.js), so the interval
+    between calls is itself a perfectly good sampling window; sleeping
+    ``sample_seconds`` inside the request handler used to tie up a
+    thread-pool worker for a full second per poll for nothing, which adds up
+    fast on a small VPS if the dashboard tab is left open. First call (or a
+    call more than ~5x the expected poll interval after the last one, e.g.
+    after the panel restarts) has no prior sample to diff against, so it
+    reports 0 rather than a meaningless huge delta over an unknown gap.
+    """
+    global _last_net
+    now = time.monotonic()
+    rx, tx = _net_totals()
+    prev = _last_net
+    _last_net = (now, rx, tx)
+    if prev is None:
+        return {"rx_bps": 0, "tx_bps": 0}
+    prev_t, prev_rx, prev_tx = prev
+    dt = now - prev_t
+    if dt <= 0 or dt > 30:
+        return {"rx_bps": 0, "tx_bps": 0}
+    return {"rx_bps": int((rx - prev_rx) / dt), "tx_bps": int((tx - prev_tx) / dt)}
 
 
 def services_health() -> list[dict]:

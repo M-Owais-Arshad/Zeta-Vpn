@@ -5,11 +5,16 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=zetavpn
+Group=zetavpn
 ExecStart=/usr/bin/python3 /opt/zetavpn/proxies/ws-proxy.py --listen 0.0.0.0:8880 --backend 127.0.0.1:22
 Restart=always
 RestartSec=3
 LimitNOFILE=1000000
 NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

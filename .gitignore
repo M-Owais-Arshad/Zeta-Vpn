@@ -38,3 +38,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Claude Code local session config
+.claude/

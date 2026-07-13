@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from .. import auth as auth_lib
 from ..db import get_db
 from ..deps import require_admin
 from ..models import SSHAccount, User
@@ -16,15 +17,18 @@ from ..schemas import SSHAccountCreate, SSHAccountOut
 router = APIRouter()
 
 
-def _to_out(acc: SSHAccount) -> SSHAccountOut:
+def _to_out(acc: SSHAccount, online_counts: dict[str, int] | None = None) -> SSHAccountOut:
     out = SSHAccountOut.model_validate(acc)
-    out.online = ssh_manager.online_count(acc.username)
+    counts = online_counts if online_counts is not None else ssh_manager.online_counts()
+    out.online = counts.get(acc.username, 0)
     return out
 
 
 @router.get("", response_model=list[SSHAccountOut])
 def list_accounts(db: Session = Depends(get_db), _: User = Depends(require_admin)) -> list[SSHAccountOut]:
-    return [_to_out(a) for a in db.query(SSHAccount).order_by(SSHAccount.id).all()]
+    accounts = db.query(SSHAccount).order_by(SSHAccount.id).all()
+    counts = ssh_manager.online_counts()  # one `who` call for the whole list
+    return [_to_out(a, counts) for a in accounts]
 
 
 @router.post("", response_model=SSHAccountOut, status_code=status.HTTP_201_CREATED)
@@ -46,7 +50,7 @@ def create_account(
 
     acc = SSHAccount(
         username=body.username,
-        password=body.password,
+        password_hash=auth_lib.hash_password(body.password),
         max_login=body.max_login,
         expiry_date=expiry,
         comment=body.comment,

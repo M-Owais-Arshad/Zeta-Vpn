@@ -1,9 +1,11 @@
-"""Background tasks: traffic accounting and quota/expiry enforcement.
+"""Background tasks: traffic accounting and quota/expiry/IP-limit enforcement.
 
 Runs inside the panel process as an asyncio task. Every ``stats_poll_seconds`` it
-reads (and resets) Xray's counters, accumulates them into the DB, records a
+reads (and resets) both cores' traffic counters, accumulates them into the DB,
+updates each client's concurrent-IP status from the Xray access log, records a
 throughput snapshot for the dashboard chart, and — when a client crosses its
-quota or expiry — reloads the affected core so the credential stops working.
+quota, expiry or IP limit — reloads the affected core so the credential stops
+working.
 """
 
 from __future__ import annotations
@@ -14,10 +16,11 @@ import logging
 
 from sqlalchemy import func
 
+from . import auth as auth_lib
 from .config import settings
 from .db import SessionLocal
 from .models import Client, Inbound, TrafficSnapshot
-from .core import singbox, system_stats, xray
+from .core import access_log, singbox, system_stats, xray
 
 log = logging.getLogger("zeta.tasks")
 
@@ -26,31 +29,60 @@ _cut_clients: set[int] = set()
 
 
 def _accumulate_once() -> None:
-    stats = xray.query_stats(reset=True)
-    if not stats["users"] and not stats["inbounds"]:
-        _record_snapshot()
-        return
+    # Xray has a gRPC StatsService; sing-box only exposes live connections via
+    # its Clash API. Both return the same {"users": {...}, "inbounds": {...}}
+    # shape so they can be merged and processed identically.
+    xray_stats = xray.query_stats(reset=True)
+    singbox_stats = singbox.query_stats(reset=True)
 
     db = SessionLocal()
     try:
-        # Per-client usage.
-        for email, rec in stats["users"].items():
-            for client in db.query(Client).filter(Client.email == email).all():
-                client.up = (client.up or 0) + rec["up"]
-                client.down = (client.down or 0) + rec["down"]
-        # Per-inbound usage.
-        for tag, rec in stats["inbounds"].items():
-            ib = db.query(Inbound).filter(Inbound.tag == tag).first()
-            if ib:
-                ib.up = (ib.up or 0) + rec["up"]
-                ib.down = (ib.down or 0) + rec["down"]
+        for stats in (xray_stats, singbox_stats):
+            # Per-client usage.
+            for email, rec in stats["users"].items():
+                for client in db.query(Client).filter(Client.email == email).all():
+                    client.up = (client.up or 0) + rec["up"]
+                    client.down = (client.down or 0) + rec["down"]
+            # Per-inbound usage.
+            for tag, rec in stats["inbounds"].items():
+                ib = db.query(Inbound).filter(Inbound.tag == tag).first()
+                if ib:
+                    ib.up = (ib.up or 0) + rec["up"]
+                    ib.down = (ib.down or 0) + rec["down"]
         db.commit()
 
+        # Clients with a non-zero delta this poll are still actively
+        # transferring data even if Xray's access log logged their
+        # connection minutes ago and never again (see access_log.py) —
+        # used to keep genuinely-active clients from "going offline".
+        active_emails = {email for email, rec in xray_stats["users"].items() if rec["up"] or rec["down"]}
+        _update_ip_limits(db, active_emails)
+
+        # Always enforce, even when this poll gathered zero fresh stats (a
+        # quiet Xray period, sing-box-only deployment, or Clash API briefly
+        # unreachable must not skip cutting off already-expired/over-quota
+        # clients — expiry/quota are evaluated against data already in the
+        # DB, not against this poll's deltas).
         _enforce_limits(db)
     finally:
         db.close()
 
     _record_snapshot()
+
+
+def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001
+    """Flag/unflag clients currently exceeding their concurrent-IP cap.
+
+    Only touches ``ip_limit_exceeded`` (a transient flag, unlike
+    enabled/expiry/quota); ``_enforce_limits()`` picks up the resulting
+    ``is_usable`` change the same way it already does for quota/expiry.
+    """
+    counts = access_log.poll_concurrent_ips(active_emails)
+    for client in db.query(Client).filter(Client.limit_ip > 0).all():
+        exceeded = counts.get(client.email, 0) > client.limit_ip
+        if exceeded != client.ip_limit_exceeded:
+            client.ip_limit_exceeded = exceeded
+    db.commit()
 
 
 def _enforce_limits(db) -> None:  # noqa: ANN001
@@ -109,6 +141,7 @@ async def stats_loop() -> None:
     while True:
         try:
             await asyncio.to_thread(_accumulate_once)
+            auth_lib.login_guard.sweep_stale()
         except Exception as exc:  # noqa: BLE001
             log.warning("stats poll error: %s", exc)
         await asyncio.sleep(settings.stats_poll_seconds)

@@ -28,12 +28,34 @@ published CVE classes for panels in this category, is in [RESEARCH.md](RESEARCH.
 
 ## The privilege trade-off (read this)
 
-Because ZetaVPN manages **system SSH users** (`useradd`/`chage`) and **services** (`systemctl`), the
-panel process runs privileged, like 3x-ui and the AutoScript panels it draws on. This is a
-deliberate trade-off for a single-node personal panel. To reduce the blast radius:
+ZetaVPN manages **system SSH users** (`useradd`/`chage`) and **services** (`systemctl`), but the
+panel process itself does **not** run as root:
 
-- The proxy **cores** run as hardened units (`NoNewPrivileges`, scoped `AmbientCapabilities`,
-  `ProtectSystem`), *not* with broad privileges.
+- All four units (`zeta-panel`, `zeta-xray`, `zeta-singbox`, `zeta-ws`) run as a dedicated,
+  unprivileged `zetavpn` system user (`install.sh` creates it and `chown`s the directories each
+  service needs — `ZETA_HOME`, `/usr/local/etc/xray`, `/etc/sing-box`, the cert dir).
+- The panel's two genuinely-privileged jobs — SSH account lifecycle
+  (`useradd`/`userdel`/`usermod`/`chpasswd`/`chage`) and reloading proxy/SSH-stack services
+  (`systemctl restart/stop`) — are delegated through a narrowly scoped **NOPASSWD sudoers rule**
+  (`/etc/sudoers.d/zetavpn-panel`, regenerated on every install/update) instead of the whole
+  HTTP-facing app running as root. A bug in the API surface can no longer be turned into an
+  arbitrary-file-write-as-root the way it could when the process itself was root (the
+  CVE-2026-55477 pattern in 3x-ui).
+- The proxy **cores** (`zeta-xray`, `zeta-singbox`) additionally run with `ProtectSystem=strict`,
+  `ProtectHome=true` and scoped `AmbientCapabilities` (`CAP_NET_BIND_SERVICE` to bind low ports
+  without root) — they never need `sudo` and get the tightest sandbox of the four units.
+- `zeta-panel` keeps `NoNewPrivileges=false` — this is required for `sudo` (a setuid binary) to
+  work, not a sign it's unrestricted; its actual privileges are whatever the sudoers rule grants,
+  nothing more.
+
+Residual risk: the sudoers rule's argument wildcards (needed since usernames/dates are dynamic)
+mean a *full remote-code-execution* bug in the panel process could still be leveraged to run those
+specific commands with unintended arguments — sudoers command-matching can't validate semantics,
+only shape. It cannot be used to run anything outside that fixed command list, and it's a large
+reduction from "the entire process is root" either way.
+
+Beyond that:
+
 - Always deploy **behind a domain + TLS** and keep the secret path private.
 - Restrict who can reach the panel port (bind nginx to the domain; consider a firewall allow-list or
   binding the panel to `127.0.0.1` behind nginx).

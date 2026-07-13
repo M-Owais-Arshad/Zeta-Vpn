@@ -18,30 +18,36 @@
       <form id="login-form">
         <div class="field"><label>Username</label><input id="l-user" autocomplete="username" required /></div>
         <div class="field"><label>Password</label><input id="l-pass" type="password" autocomplete="current-password" required /></div>
-        <div class="field"><label>2FA code <span class="muted">(if enabled)</span></label><input id="l-totp" inputmode="numeric" placeholder="123456" /></div>
-        <p id="login-err" style="color:var(--danger);font-size:13px;min-height:16px;margin:0 0 10px"></p>
-        <button class="btn primary block" type="submit">Sign in</button>
+        <div class="field hidden" id="l-totp-field"><label>2FA code</label><input id="l-totp" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" /></div>
+        <p class="form-error" id="login-err"></p>
+        <button class="btn primary block" id="login-btn" type="submit">Sign in</button>
+        <p class="hint center"><a href="#" id="l-totp-toggle">Have a 2FA code?</a></p>
       </form>
     </div>
   </div>
 
   <!-- ===================== App ===================== -->
   <div id="app-view" class="app hidden">
+    <div id="scrim" class="scrim"></div>
     <aside class="sidebar">
       <div class="brand"><img class="logo" src="assets/img/logo.svg" alt="" /><span class="name">Zeta<b>VPN</b></span></div>
-      <a class="nav-item active" data-view="dashboard" href="#">
+      <a class="nav-item" data-view="dashboard" href="#/dashboard">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
         Dashboard
       </a>
-      <a class="nav-item" data-view="inbounds" href="#">
+      <a class="nav-item" data-view="inbounds" href="#/inbounds">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         Inbounds
       </a>
-      <a class="nav-item" data-view="ssh" href="#">
+      <a class="nav-item" data-view="clients" href="#/clients">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>
+        Clients
+      </a>
+      <a class="nav-item" data-view="ssh" href="#/ssh">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>
         SSH Accounts
       </a>
-      <a class="nav-item" data-view="settings" href="#">
+      <a class="nav-item" data-view="settings" href="#/settings">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 6.6 19l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 4 12.6H3.9a2 2 0 1 1 0-4H4a1.6 1.6 0 0 0 1.5-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 11 3.9V3.9a2 2 0 1 1 4 0V4a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.6 1.6 0 0 0 20.1 11H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
         Settings
       </a>
@@ -54,9 +60,14 @@
 
     <main class="main">
       <div class="topbar">
-        <div>
-          <h2 id="page-title">Dashboard</h2>
-          <div class="who" id="page-sub"></div>
+        <div class="tb-left">
+          <button id="menu-toggle" class="icon-btn menu-toggle" type="button" aria-label="Toggle menu">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </button>
+          <div>
+            <h2 id="page-title">Dashboard</h2>
+            <div class="who" id="page-sub"></div>
+          </div>
         </div>
         <div class="who">Signed in as <b id="who">—</b></div>
       </div>

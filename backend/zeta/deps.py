@@ -15,10 +15,16 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def client_ip(request: Request) -> str:
-    """Best-effort client IP, honouring a single trusted reverse proxy hop."""
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    """Best-effort client IP.
+
+    Deliberately does NOT re-parse X-Forwarded-For here: uvicorn's
+    ProxyHeadersMiddleware (wired up in main.py with `forwarded_allow_ips`
+    limited to `settings.trusted_proxies`) already resolves the real client
+    IP into ``request.client`` when the connection came through a trusted
+    reverse proxy, and leaves it as the raw TCP peer otherwise. Re-reading the
+    header here would let a direct connection spoof its own X-Forwarded-For
+    and bypass the login brute-force lockout / falsify audit logs.
+    """
     return request.client.host if request.client else "unknown"
 
 

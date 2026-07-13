@@ -42,7 +42,14 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)) -
         )
 
     user = db.query(User).filter(User.username == body.username).first()
-    if user is None or not auth_lib.verify_password(body.password, user.password_hash):
+    # Always run a bcrypt verify, even for an unknown username (against a
+    # fixed dummy hash) — otherwise a missing user short-circuits in
+    # microseconds while a real one takes ~100ms, letting an attacker
+    # enumerate valid usernames purely from response timing.
+    password_ok = auth_lib.verify_password(
+        body.password, user.password_hash if user else auth_lib.DUMMY_PASSWORD_HASH
+    )
+    if user is None or not password_ok:
         auth_lib.login_guard.record_failure(guard_key)
         _audit(db, body.username, "login_failed", "bad credentials", ip)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid username or password")

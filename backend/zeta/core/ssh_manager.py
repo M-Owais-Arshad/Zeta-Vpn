@@ -51,12 +51,13 @@ def create_account(
     shell: str = _TUNNEL_SHELL,
 ) -> services.CommandResult:
     validate_username(username)
-    cmd = ["useradd", "-m", "-s", shell]
     exp = _fmt_expiry(expiry)
+    direct_cmd = ["useradd", "-m", "-s", shell]
     if exp:
-        cmd += ["-e", exp]
-    cmd.append(username)
-    res = services.run(cmd, timeout=20)
+        direct_cmd += ["-e", exp]
+    direct_cmd.append(username)
+    wrapper_args = ["useradd", username, exp] if exp else ["useradd", username]
+    res = services.run_privileged(wrapper_args, direct_cmd, timeout=20)
     if not res.ok:
         return res
     return set_password(username, password)
@@ -64,12 +65,19 @@ def create_account(
 
 def set_password(username: str, password: str) -> services.CommandResult:
     validate_username(username)
-    # `chpasswd` reads "user:password" on stdin — avoids exposing the password in argv.
+    # `chpasswd` reads "user:password" lines on stdin — avoids exposing the
+    # password in argv, but a newline/NUL in `password` would inject an extra
+    # line and let the caller rewrite an arbitrary account's password (e.g.
+    # root's). The API layer already rejects control characters in the
+    # password field (schemas.py); this is defense-in-depth for any other
+    # caller (e.g. the `zeta` CLI) that reaches this function directly.
+    if "\n" in password or "\r" in password or "\x00" in password:
+        return services.CommandResult(False, 1, "", "password must not contain control characters")
     try:
         import subprocess
 
         proc = subprocess.run(
-            ["chpasswd"],
+            services.privileged_argv(["chpasswd"], ["chpasswd"]),
             input=f"{username}:{password}\n",
             text=True,
             capture_output=True,
@@ -85,33 +93,52 @@ def set_password(username: str, password: str) -> services.CommandResult:
 def set_expiry(username: str, expiry: date | datetime | None) -> services.CommandResult:
     validate_username(username)
     exp = _fmt_expiry(expiry)
-    return services.run(["chage", "-E", exp or "-1", username], timeout=20)
+    return services.run_privileged(
+        ["chage", username, exp or "-1"], ["chage", "-E", exp or "-1", username], timeout=20
+    )
 
 
 def lock(username: str) -> services.CommandResult:
     validate_username(username)
-    return services.run(["usermod", "-L", username], timeout=20)
+    return services.run_privileged(
+        ["usermod-lock", username], ["usermod", "-L", username], timeout=20
+    )
 
 
 def unlock(username: str) -> services.CommandResult:
     validate_username(username)
-    return services.run(["usermod", "-U", username], timeout=20)
+    return services.run_privileged(
+        ["usermod-unlock", username], ["usermod", "-U", username], timeout=20
+    )
 
 
 def delete_account(username: str) -> services.CommandResult:
     validate_username(username)
-    return services.run(["userdel", "-r", username], timeout=30)
+    return services.run_privileged(
+        ["userdel", username], ["userdel", "-r", username], timeout=30
+    )
 
 
 def kill_sessions(username: str) -> services.CommandResult:
     """Terminate all live processes/sessions for a user (enforce expiry/limits)."""
     validate_username(username)
-    return services.run(["pkill", "-KILL", "-u", username], timeout=15)
+    return services.run_privileged(
+        ["pkill", username], ["pkill", "-KILL", "-u", username], timeout=15
+    )
 
 
-def online_count(username: str) -> int:
-    """Number of active SSH sessions for a user (best-effort via `who`)."""
+def online_counts() -> dict[str, int]:
+    """Active SSH session count per username (best-effort via one `who` call).
+
+    A single `who` invocation covers every account, instead of the caller
+    spawning one subprocess per account when listing them all.
+    """
     res = services.run(["who"], timeout=10)
     if not res.ok:
-        return 0
-    return sum(1 for line in res.stdout.splitlines() if line.split()[:1] == [username])
+        return {}
+    counts: dict[str, int] = {}
+    for line in res.stdout.splitlines():
+        parts = line.split()
+        if parts:
+            counts[parts[0]] = counts.get(parts[0], 0) + 1
+    return counts

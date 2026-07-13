@@ -125,7 +125,7 @@ def run() -> None:
         host=settings.host,
         port=settings.port,
         proxy_headers=True,
-        forwarded_allow_ips="*",
+        forwarded_allow_ips=settings.trusted_proxies,
         log_level="info",
     )
 

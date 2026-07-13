@@ -5,16 +5,22 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=zetavpn
+Group=zetavpn
 WorkingDirectory=/opt/zetavpn/backend
 EnvironmentFile=-/opt/zetavpn/.env
 ExecStart=/opt/zetavpn/venv/bin/python -m zeta.main
 Restart=always
 RestartSec=3
 LimitNOFILE=1000000
-# The panel manages system users (useradd → /etc), services (systemctl) and writes
-# the cores' configs under /usr/local/etc/xray and /etc/sing-box, so filesystem
-# sandboxing is intentionally NOT applied here — it would break config writes and
-# account management. The proxy cores run hardened instead (see zeta-xray/singbox).
+# The panel runs as the unprivileged 'zetavpn' user (install.sh creates it and
+# chowns the dirs it writes: ZETA_HOME, /usr/local/etc/xray, /etc/sing-box).
+# The few genuinely-privileged jobs it still needs — managing SSH tunnel
+# accounts (useradd/chpasswd/chage/usermod/userdel) and reloading the proxy
+# core / SSH-stack services (systemctl) — are delegated via a narrowly scoped
+# NOPASSWD sudoers rule (/etc/sudoers.d/zetavpn-panel) instead of running the
+# whole HTTP-facing app as root. NoNewPrivileges MUST stay false: sudo is a
+# setuid-root binary, and NoNewPrivileges=true would block it from working.
 NoNewPrivileges=false
 
 [Install]

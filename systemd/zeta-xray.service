@@ -6,12 +6,28 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=zetavpn
+Group=zetavpn
 ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=1000000
+# CAP_NET_BIND_SERVICE lets a non-root process bind ports <1024 (e.g. 443);
+# CAP_NET_ADMIN is kept for transports that need it (tun/WireGuard-style
+# outbounds). install.sh chowns /usr/local/etc/xray and the cert dir to
+# 'zetavpn' so this non-root user can still read its config and TLS certs.
 AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
 NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# Xray writes its per-connection access log here (log.access in the generated
+# config — see core/xray.py and core/access_log.py, used to enforce
+# Client.limit_ip). Without this, ProtectSystem=strict makes the path
+# read-only and the access log — and limit_ip enforcement — silently stop
+# working (or worse, Xray fails to start if it treats the open() failure as
+# fatal). install.sh chowns /var/log/zetavpn to 'zetavpn'.
+ReadWritePaths=/var/log/zetavpn
 
 [Install]
 WantedBy=multi-user.target

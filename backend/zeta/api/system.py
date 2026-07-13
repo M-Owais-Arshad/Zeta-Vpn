@@ -48,8 +48,11 @@ def stats(db: Session = Depends(get_db), _: User = Depends(require_admin)) -> di
 
 
 @router.get("/throughput")
-def throughput(_: User = Depends(require_admin)) -> dict:
-    return system_stats.net_throughput(1.0)
+async def throughput(_: User = Depends(require_admin)) -> dict:
+    # Pure in-memory/syscall reads now (no blocking sleep — see
+    # system_stats.net_throughput()), so this can run directly on the event
+    # loop instead of costing a thread-pool dispatch on every 2s poll.
+    return system_stats.net_throughput()
 
 
 @router.get("/protocols", response_model=list[ProtocolInfo])
@@ -67,6 +70,9 @@ def list_protocols(_: User = Depends(require_admin)) -> list[ProtocolInfo]:
             udp=s.udp,
             supports_flow=s.supports_flow,
             notes=s.notes,
+            default_port=protocols.default_port(s.key, s.default_transport),
+            ports_by_network={net: protocols.default_port(s.key, net) for net in s.transports},
+            ws_family_networks=sorted(protocols.WS_FAMILY_NETWORKS),
         )
         for s in protocols.all_specs()
     ]

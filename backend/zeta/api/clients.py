@@ -8,15 +8,31 @@ import secrets
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import require_admin
 from ..models import Client, Inbound, User
-from ..core import links, protocols, singbox, xray
+from ..core import access_log, links, protocols, singbox, xray
 from ..schemas import ClientCreate, ClientLink, ClientOut, ClientUpdate
 
 router = APIRouter()
+
+
+def _flush_or_409(db: Session, email: str) -> None:
+    """Flush pending changes, translating a unique-email race into a 409.
+
+    The pre-check (SELECT ... WHERE email = ...) in create/update_client is a
+    TOCTOU race under concurrent requests — Client.email's DB-level unique
+    constraint is the real guard, so a violation here must still become a
+    normal API error instead of an unhandled IntegrityError -> raw 500.
+    """
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, f"A client with email '{email}' already exists")
 
 _GB = 1024 ** 3
 
@@ -36,7 +52,20 @@ def _get_client(db: Session, inbound_id: int, client_id: int) -> Client:
 
 
 def _apply(db: Session, ib: Inbound) -> None:
-    (xray.apply if ib.core == "xray" else singbox.apply)(db)
+    """Apply the pending (flushed but uncommitted) change to `ib`'s core.
+
+    If the core rejects the resulting config, roll back so the DB never ends
+    up holding a client the core actually refused to run, and surface the
+    real reason instead of silently discarding it.
+    """
+    res = (xray.apply if ib.core == "xray" else singbox.apply)(db)
+    if not res.ok:
+        db.rollback()
+        detail = (res.stderr or res.stdout or "validation failed").strip()
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Rejected by the {ib.core} core, no changes were applied: {detail}",
+        )
 
 
 def _gen_password(ib: Inbound) -> str:
@@ -62,9 +91,19 @@ def _default_flow(ib: Inbound, requested: str) -> str:
 @router.get("/{inbound_id}/clients", response_model=list[ClientOut])
 def list_clients(
     inbound_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)
-) -> list[Client]:
-    _get_inbound(db, inbound_id)
-    return db.query(Client).filter(Client.inbound_id == inbound_id).order_by(Client.id).all()
+) -> list[ClientOut]:
+    ib = _get_inbound(db, inbound_id)
+    clients = db.query(Client).filter(Client.inbound_id == inbound_id).order_by(Client.id).all()
+    # One snapshot read (no file/HTTP I/O — see access_log/singbox.client_activity())
+    # reused for every row instead of one lookup per client.
+    activity = access_log.client_activity() if ib.core == "xray" else singbox.client_activity()
+    out = []
+    for c in clients:
+        item = ClientOut.model_validate(c)
+        item.online_ips = activity.get(c.email, [])
+        item.online = bool(item.online_ips)
+        out.append(item)
+    return out
 
 
 @router.post("/{inbound_id}/clients", response_model=ClientOut, status_code=status.HTTP_201_CREATED)
@@ -81,6 +120,16 @@ def create_client(
     if db.query(Client).filter(Client.email == body.email).first():
         raise HTTPException(status.HTTP_409_CONFLICT, "A client with that email already exists")
 
+    if ib.protocol == "shadowsocks":
+        method = (ib.settings or {}).get("method", "")
+        if not method.startswith("2022") and db.query(Client).filter(Client.inbound_id == inbound_id).count() >= 1:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Legacy Shadowsocks ({method}) is single-user: only one client is served from the "
+                "live config. Use a 2022 cipher (e.g. 2022-blake3-aes-128-gcm) for multiple clients, "
+                "or create another inbound.",
+            )
+
     uuid_val = body.uuid
     password = body.password
     if spec.credential == protocols.CRED_UUID:
@@ -88,6 +137,12 @@ def create_client(
         if ib.protocol == "tuic":  # TUIC needs both a uuid and a password
             password = password or secrets.token_urlsafe(16)
     elif spec.credential == protocols.CRED_PASSWORD:
+        if password and ib.protocol == "shadowsocks":
+            method = (ib.settings or {}).get("method", "")
+            try:
+                protocols.validate_ss2022_password(method, password)
+            except ValueError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
         password = password or _gen_password(ib)
     else:
         password = password or secrets.token_urlsafe(12)
@@ -110,9 +165,10 @@ def create_client(
         comment=body.comment,
     )
     db.add(client)
+    _flush_or_409(db, body.email)
+    _apply(db, ib)
     db.commit()
     db.refresh(client)
-    _apply(db, ib)
     return client
 
 
@@ -128,6 +184,17 @@ def update_client(
     client = _get_client(db, inbound_id, client_id)
     data = body.model_dump(exclude_unset=True)
 
+    if "email" in data and data["email"] != client.email:
+        if db.query(Client).filter(Client.email == data["email"], Client.id != client.id).first():
+            raise HTTPException(status.HTTP_409_CONFLICT, "A client with that email already exists")
+
+    if data.get("password") and ib.protocol == "shadowsocks":
+        method = (ib.settings or {}).get("method", "")
+        try:
+            protocols.validate_ss2022_password(method, data["password"])
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
     if "total_gb" in data:
         gb = data.pop("total_gb")
         client.total_bytes = int(gb * _GB) if gb else 0
@@ -137,9 +204,10 @@ def update_client(
     for field, value in data.items():
         setattr(client, field, value)
 
+    _flush_or_409(db, client.email)
+    _apply(db, ib)
     db.commit()
     db.refresh(client)
-    _apply(db, ib)
     return client
 
 
@@ -153,8 +221,9 @@ def delete_client(
     ib = _get_inbound(db, inbound_id)
     client = _get_client(db, inbound_id, client_id)
     db.delete(client)
-    db.commit()
+    db.flush()
     _apply(db, ib)
+    db.commit()
     return {"ok": True}
 
 
@@ -169,11 +238,12 @@ def reset_traffic(
     client = _get_client(db, inbound_id, client_id)
     client.up = 0
     client.down = 0
-    db.commit()
-    db.refresh(client)
+    db.flush()
     # Reload the core so a client previously cut for exceeding quota works again
     # immediately, instead of waiting for the next enforcement poll.
     _apply(db, ib)
+    db.commit()
+    db.refresh(client)
     return client
 
 
@@ -188,4 +258,9 @@ def client_link(
     ib = _get_inbound(db, inbound_id)
     client = _get_client(db, inbound_id, client_id)
     link = links.client_link(ib, client)
-    return ClientLink(email=client.email, link=link, qr=links.qr_data_url(link) if qr and link else None)
+    return ClientLink(
+        email=client.email,
+        sub_id=client.sub_id,
+        link=link,
+        qr=links.qr_data_url(link) if qr and link else None,
+    )

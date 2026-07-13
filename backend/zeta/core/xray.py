@@ -204,10 +204,17 @@ def build_inbound_settings(inbound: Inbound) -> dict:
 
 
 def build_inbound(inbound: Inbound) -> dict:
+    # WS-family inbounds are always nginx-fronted on the shared public port
+    # (core/nginx.py) — xray itself only ever binds the private loopback
+    # port nginx proxies to, never the public one (which nginx already owns).
+    if protocols.is_ws_family(inbound.network) and inbound.internal_port:
+        listen, port = "127.0.0.1", inbound.internal_port
+    else:
+        listen, port = inbound.listen or "0.0.0.0", inbound.port
     obj = {
         "tag": inbound.tag,
-        "listen": inbound.listen or "0.0.0.0",
-        "port": inbound.port,
+        "listen": listen,
+        "port": port,
         "protocol": inbound.protocol,
         "settings": build_inbound_settings(inbound),
         "streamSettings": build_stream_settings(inbound),
@@ -242,7 +249,12 @@ def generate_config(db: Session) -> dict:
     rendered.append(_api_inbound())
 
     return {
-        "log": {"loglevel": "warning"},
+        # `access` enables per-connection logging (source IP + email) — the
+        # only way to see client IPs at all, since the gRPC stats API only
+        # exposes byte counters. core/access_log.py tails this file to
+        # enforce Client.limit_ip. loglevel stays "warning" for the general
+        # error/debug stream; access logging is independent of it.
+        "log": {"loglevel": "warning", "access": str(settings.xray_access_log)},
         "api": {"tag": "api", "services": ["HandlerService", "LoggerService", "StatsService"]},
         "stats": {},
         "policy": {
@@ -284,21 +296,42 @@ def write_config(config: dict) -> None:
             os.remove(tmp)
 
 
+def _binary_available() -> bool:
+    return os.path.isfile(settings.xray_bin) and os.access(settings.xray_bin, os.X_OK)
+
+
 def apply(db: Session) -> services.CommandResult:
-    """Regenerate config and reload Xray. Returns the restart result."""
-    write_config(generate_config(db))
+    """Regenerate, validate, then reload Xray.
+
+    The candidate config is checked with ``xray run -test`` *before* it's
+    written to the live path or the service is restarted — a bad inbound
+    (e.g. a malformed stream_settings block or a mis-sized SS2022 PSK) is
+    rejected here instead of silently taking down every other inbound
+    sharing the same config file.
+    """
+    config = generate_config(db)
+    if _binary_available():
+        check = validate_config(config)
+        if not check.ok:
+            detail = (check.stderr or check.stdout or "xray rejected the generated config").strip()
+            return services.CommandResult(False, check.code, check.stdout, detail)
+    write_config(config)
     return services.restart(settings.xray_service)
 
 
 def validate_config(config: dict | None = None) -> services.CommandResult:
     """Ask xray to test a config file without applying it."""
+    if not _binary_available():
+        return services.CommandResult(True, 0, "[skipped: xray binary unavailable]", "")
     if config is not None:
         fd, tmp = tempfile.mkstemp(suffix=".json")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(config, fh)
-        res = services.run([str(settings.xray_bin), "run", "-test", "-config", tmp], timeout=15)
-        os.remove(tmp)
-        return res
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(config, fh)
+            return services.run([str(settings.xray_bin), "run", "-test", "-config", tmp], timeout=15)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
     return services.run(
         [str(settings.xray_bin), "run", "-test", "-config", str(settings.xray_config)], timeout=15
     )

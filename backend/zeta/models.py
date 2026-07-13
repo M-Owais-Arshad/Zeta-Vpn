@@ -18,6 +18,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    TypeDecorator,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,6 +27,35 @@ from .db import Base
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class UTCDateTime(TypeDecorator):
+    """A DateTime that always round-trips as timezone-aware UTC.
+
+    SQLite has no native tz-aware datetime type, so plain
+    ``DateTime(timezone=True)`` silently returns a *naive* datetime on read —
+    comparing that against ``datetime.now(timezone.utc)`` anywhere (e.g. SSH
+    account expiry checks) raises ``TypeError: can't compare offset-naive and
+    offset-aware datetimes``. This coerces on both sides so every column
+    reads back aware UTC regardless of backend.
+    """
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):  # noqa: ANN001
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(self, value, dialect):  # noqa: ANN001
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class User(Base):
@@ -42,8 +72,8 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Bumped on password change to invalidate every previously issued token.
     token_version: Mapped[int] = mapped_column(Integer, default=0)
-    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_login: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
 
 
 class Setting(Base):
@@ -68,7 +98,21 @@ class Inbound(Base):
     core: Mapped[str] = mapped_column(String(16), default="xray")  # xray | singbox
     protocol: Mapped[str] = mapped_column(String(32))  # vless, vmess, trojan, shadowsocks, hysteria2, tuic, ...
     listen: Mapped[str] = mapped_column(String(64), default="0.0.0.0")
+    # Public-facing port (what the client connects to). NOT unique by itself:
+    # a TCP inbound (e.g. VLESS-REALITY) and a UDP inbound (e.g. Hysteria2)
+    # legitimately share a port number — independent port spaces — and every
+    # WS-family inbound intentionally shares :80 (see port_key below).
     port: Mapped[int] = mapped_column(Integer, index=True)
+    # xray listens HERE (127.0.0.1:<internal_port>) for WS-family transports,
+    # which are always nginx-fronted on the shared public `port` (core/nginx.py
+    # generates the per-inbound path -> internal_port location block). NULL
+    # for direct (non-nginx-fronted) inbounds, where xray binds `port` itself.
+    internal_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # "<port>:<tcp|udp>" for direct inbounds, or "80:<ws path>" for WS-family
+    # ones — the actual real-world collision key, computed by the API layer
+    # (core/protocols.compute_port_key) and enforced unique here so a race
+    # between two concurrent requests can't both win.
+    port_key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
 
     # Transport / stream. network = tcp|ws|grpc|httpupgrade|xhttp|kcp|quic (xray)
     network: Mapped[str] = mapped_column(String(24), default="tcp")
@@ -84,8 +128,8 @@ class Inbound(Base):
     up: Mapped[int] = mapped_column(BigInteger, default=0)
     down: Mapped[int] = mapped_column(BigInteger, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     clients: Mapped[list["Client"]] = relationship(
         back_populates="inbound", cascade="all, delete-orphan"
@@ -112,6 +156,11 @@ class Client(Base):
     limit_ip: Mapped[int] = mapped_column(Integer, default=0)  # 0 = unlimited concurrent IPs
     total_bytes: Mapped[int] = mapped_column(BigInteger, default=0)  # 0 = unlimited quota
     expiry_time: Mapped[int] = mapped_column(BigInteger, default=0)  # ms epoch, 0 = never
+    # Set/cleared by tasks.py from the Xray access-log IP tracker (see
+    # core/access_log.py) when the client is currently using more distinct
+    # source IPs than limit_ip allows. Temporary, unlike enabled/expiry/quota
+    # — clears itself once recent IP activity drops back under the limit.
+    ip_limit_exceeded: Mapped[bool] = mapped_column(Boolean, default=False)
 
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     sub_id: Mapped[str] = mapped_column(String(64), index=True, default="")  # subscription group
@@ -121,7 +170,7 @@ class Client(Base):
     up: Mapped[int] = mapped_column(BigInteger, default=0)
     down: Mapped[int] = mapped_column(BigInteger, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
 
     inbound: Mapped["Inbound"] = relationship(back_populates="clients")
 
@@ -143,7 +192,12 @@ class Client(Base):
 
     @property
     def is_usable(self) -> bool:
-        return self.enabled and not self.is_expired and not self.is_quota_exceeded
+        return (
+            self.enabled
+            and not self.is_expired
+            and not self.is_quota_exceeded
+            and not self.ip_limit_exceeded
+        )
 
 
 class SSHAccount(Base):
@@ -153,12 +207,17 @@ class SSHAccount(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    password: Mapped[str] = mapped_column(String(128))
+    # bcrypt hash, not the plaintext OS password — nothing in the panel ever
+    # needs to read this back (the OS account's real password lives only in
+    # /etc/shadow); this column exists purely so a leaked DB/backup doesn't
+    # also hand out live SSH credentials in plaintext. Kept for reference
+    # (e.g. detecting a stale/lost password) rather than for programmatic use.
+    password_hash: Mapped[str] = mapped_column(String(255))
     max_login: Mapped[int] = mapped_column(Integer, default=1)
-    expiry_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expiry_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     comment: Mapped[str] = mapped_column(String(255), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
 
 
 class TrafficSnapshot(Base):
@@ -167,7 +226,7 @@ class TrafficSnapshot(Base):
     __tablename__ = "traffic_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    ts: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, index=True)
     rx_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     tx_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
 
@@ -178,7 +237,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+    ts: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, index=True)
     actor: Mapped[str] = mapped_column(String(64), default="system")
     action: Mapped[str] = mapped_column(String(64))
     detail: Mapped[str] = mapped_column(Text, default="")

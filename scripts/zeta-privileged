@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# ZetaVPN privileged-action wrapper — the ONLY command the 'zetavpn' service
+# user may run as root (see /etc/sudoers.d/zetavpn-panel).
+#
+# Modern sudo rejects wildcards in command *arguments* (only the command path
+# itself may glob), so sudoers alone can't safely say "useradd with any
+# username/date but nothing else". This script is what sudoers actually
+# grants (with zero argument restrictions, since none are needed — a single
+# fixed path); it does the argument validation itself, in one auditable
+# place, before ever touching a real privileged command. Must stay root-owned
+# and non-group/world-writable: if 'zetavpn' could edit this file, granting
+# it "sudo to run this file" would be equivalent to full root.
+set -euo pipefail
+
+USERNAME_RE='^[a-z_][a-z0-9_-]{2,31}$'
+DATE_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+
+die() { echo "zeta-privileged: $*" >&2; exit 1; }
+
+valid_username() {
+  [[ "$1" =~ $USERNAME_RE ]] || die "invalid username: $1"
+}
+
+valid_date_or_none() {
+  # empty or "-1" (chage's "never expire") is fine; otherwise must be YYYY-MM-DD
+  [ -z "$1" ] || [ "$1" = "-1" ] || [[ "$1" =~ $DATE_RE ]] || die "invalid date: $1"
+}
+
+action="${1:-}"
+shift || true
+
+case "$action" in
+  useradd)
+    # zeta-privileged useradd <username> [expiry-date]
+    username="${1:-}"; expiry="${2:-}"
+    [ -n "$username" ] || die "username required"
+    valid_username "$username"
+    valid_date_or_none "$expiry"
+    if [ -n "$expiry" ]; then
+      exec useradd -m -s /bin/false -e "$expiry" "$username"
+    else
+      exec useradd -m -s /bin/false "$username"
+    fi
+    ;;
+
+  userdel)
+    username="${1:-}"; [ -n "$username" ] || die "username required"
+    valid_username "$username"
+    exec userdel -r "$username"
+    ;;
+
+  usermod-lock)
+    username="${1:-}"; [ -n "$username" ] || die "username required"
+    valid_username "$username"
+    exec usermod -L "$username"
+    ;;
+
+  usermod-unlock)
+    username="${1:-}"; [ -n "$username" ] || die "username required"
+    valid_username "$username"
+    exec usermod -U "$username"
+    ;;
+
+  chage)
+    username="${1:-}"; expiry="${2:-}"
+    [ -n "$username" ] || die "username required"
+    valid_username "$username"
+    valid_date_or_none "$expiry"
+    exec chage -E "${expiry:--1}" "$username"
+    ;;
+
+  pkill)
+    username="${1:-}"; [ -n "$username" ] || die "username required"
+    valid_username "$username"
+    exec pkill -KILL -u "$username"
+    ;;
+
+  chpasswd)
+    # Reads "username:password\n" on stdin. The caller (core/ssh_manager.py)
+    # already rejects control characters in both fields before we ever get
+    # here, so there's nothing further to validate on our side — we're just
+    # the sudo chokepoint.
+    exec chpasswd
+    ;;
+
+  systemctl)
+    subaction="${1:-}"; unit="${2:-}"
+    case "$subaction" in
+      restart|reload-or-restart|stop) ;;
+      *) die "action not allowed: $subaction" ;;
+    esac
+    case "$unit" in
+      zeta-panel|zeta-xray|zeta-singbox|zeta-ws|nginx|ssh|dropbear|stunnel4) ;;
+      *) die "unit not allowed: $unit" ;;
+    esac
+    exec systemctl "$subaction" "$unit"
+    ;;
+
+  ufw-allow)
+    # zeta-privileged ufw-allow <port> <tcp|udp>
+    # Opens the firewall for a client-facing proxy port the admin picked in
+    # the panel — without this, an inbound on a non-default port is created
+    # successfully and xray/sing-box happily binds it, but stays externally
+    # unreachable because nothing ever told ufw about it.
+    port="${1:-}"; proto="${2:-tcp}"
+    [[ "$port" =~ ^[0-9]{1,5}$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || die "invalid port: $port"
+    case "$proto" in tcp|udp) ;; *) die "invalid proto: $proto" ;; esac
+    exec ufw allow "${port}/${proto}"
+    ;;
+
+  ufw-delete)
+    # zeta-privileged ufw-delete <port> <tcp|udp>
+    port="${1:-}"; proto="${2:-tcp}"
+    [[ "$port" =~ ^[0-9]{1,5}$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || die "invalid port: $port"
+    case "$proto" in tcp|udp) ;; *) die "invalid proto: $proto" ;; esac
+    exec ufw --force delete allow "${port}/${proto}"
+    ;;
+
+  *)
+    die "unknown action: $action"
+    ;;
+esac

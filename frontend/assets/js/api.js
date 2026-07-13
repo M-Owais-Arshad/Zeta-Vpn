@@ -43,12 +43,6 @@
       body: body != null ? JSON.stringify(body) : undefined,
     });
 
-    if (res.status === 401) {
-      setToken("");
-      document.dispatchEvent(new CustomEvent("zeta:unauthorized"));
-      throw new Error("Session expired — please sign in again");
-    }
-
     var data = null;
     var text = await res.text();
     if (text) {
@@ -58,9 +52,19 @@
         data = text;
       }
     }
+    var msg = (data && (data.detail || data.message)) || res.statusText || "Request failed";
+    if (Array.isArray(msg)) msg = msg.map(function (m) { return m.msg || m; }).join(", ");
+
+    // A 401 from /auth/login is just "wrong password/2FA code" — there was
+    // never a session to expire, so show the real backend message instead of
+    // clearing a token / redirecting to the login screen we're already on.
+    if (res.status === 401 && path !== "/auth/login") {
+      setToken("");
+      document.dispatchEvent(new CustomEvent("zeta:unauthorized"));
+      throw new Error("Session expired — please sign in again");
+    }
+
     if (!res.ok) {
-      var msg = (data && (data.detail || data.message)) || res.statusText || "Request failed";
-      if (Array.isArray(msg)) msg = msg.map(function (m) { return m.msg || m; }).join(", ");
       throw new Error(msg);
     }
     return data;

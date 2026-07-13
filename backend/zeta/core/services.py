@@ -7,6 +7,7 @@ of crashing.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -20,6 +21,46 @@ class CommandResult:
     code: int
     stdout: str
     stderr: str
+
+
+PRIVILEGED_WRAPPER = "/usr/local/sbin/zeta-privileged"
+
+
+def _needs_sudo() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() != 0
+
+
+def privileged_argv(wrapper_args: list[str], direct_cmd: list[str]) -> list[str]:
+    """Resolve the argv for a privileged action without running it.
+
+    Same routing as `run_privileged()`, exposed separately for the one
+    caller (ssh_manager.set_password) that needs to pipe input via stdin
+    rather than go through `run()`.
+    """
+    if _needs_sudo():
+        sudo_bin = str(shutil.which("sudo") or "sudo")
+        return [sudo_bin, "-n", PRIVILEGED_WRAPPER, *wrapper_args]
+    return direct_cmd
+
+
+def run_privileged(wrapper_args: list[str], direct_cmd: list[str], **kwargs) -> "CommandResult":
+    """Run a privileged OS action, via the zeta-privileged wrapper when non-root.
+
+    The panel runs as the unprivileged `zetavpn` system user in production
+    (see systemd/zeta-panel.service); a handful of operations — managing SSH
+    tunnel accounts and reloading the proxy core services — genuinely need
+    root. sudo's own argument matching can't safely express "useradd with
+    any username/date but nothing else" (modern sudo rejects wildcards in
+    command *arguments*, only the command path may glob), so the sudoers
+    rule (installed by install.sh) grants exactly one fixed-path command —
+    `zeta-privileged` — which does the argument validation itself in one
+    auditable place. A bug in the (much larger) HTTP-facing app surface
+    still can't be leveraged into arbitrary-file-write-as-root the way it
+    could when the process itself was root (the CVE-2026-55477 pattern).
+    When already root (dev box, container), skip the wrapper and run the
+    direct command — the wrapper doesn't exist there anyway.
+    """
+    return run(privileged_argv(wrapper_args, direct_cmd), **kwargs)
 
 
 def run(cmd: list[str], timeout: int = 30, check: bool = False) -> CommandResult:
@@ -48,7 +89,12 @@ def _systemctl_available() -> bool:
 def systemctl(action: str, unit: str) -> CommandResult:
     if not _systemctl_available():
         return CommandResult(True, 0, f"[skipped: no systemd] {action} {unit}", "")
-    return run(["systemctl", action, unit], timeout=45)
+    # `is-active`/`status` are unprivileged reads and deliberately skip the
+    # wrapper so dashboard polling works even if the sudoers rule is ever
+    # missing/broken. Mutating actions need root.
+    if action in ("is-active", "status", "is-enabled", "show"):
+        return run(["systemctl", action, unit], timeout=45)
+    return run_privileged(["systemctl", action, unit], ["systemctl", action, unit], timeout=45)
 
 
 def restart(unit: str) -> CommandResult:

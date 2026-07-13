@@ -8,7 +8,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${HERE}/common.sh"
 need_root
 
-PANEL_PORT="${PANEL_PORT:-2096}"
+# Same env vars + defaults as install_ssh_stack.sh / install_nginx.sh — a
+# custom port there must open the matching port here, not a hardcoded one.
+DROPBEAR_PORT_MAIN="${DROPBEAR_PORT_MAIN:-149}"
+DROPBEAR_PORT_ALT="${DROPBEAR_PORT_ALT:-143}"
+STUNNEL_PORT="${STUNNEL_PORT:-445}"
+WS_PORT="${WS_PORT:-8880}"
 
 msg "Configuring firewall + fail2ban"
 apt_install fail2ban || warn "fail2ban install skipped"
@@ -17,10 +22,14 @@ if command -v ufw >/dev/null 2>&1 || apt_install ufw; then
   ufw --force reset >/dev/null 2>&1 || true
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
-  # Core management / web
-  for p in 22 80 443 "$PANEL_PORT"; do ufw allow "${p}/tcp" >/dev/null; done
-  # SSH stack (dropbear/stunnel/ws) + common proxy ports
-  for p in 109 143 149 445 8880; do ufw allow "${p}/tcp" >/dev/null; done
+  # Core management / web. The panel itself binds 127.0.0.1 (nginx always
+  # fronts it, TLS or plain :80) so PANEL_PORT is deliberately NOT opened
+  # publicly here — that would only expose an unencrypted bypass around nginx.
+  for p in 22 80 443; do ufw allow "${p}/tcp" >/dev/null; done
+  # SSH stack: dropbear (main + alt ports), stunnel (SSH-over-SSL), SSH-over-WS
+  for p in "$DROPBEAR_PORT_MAIN" "$DROPBEAR_PORT_ALT" "$STUNNEL_PORT" "$WS_PORT"; do
+    ufw allow "${p}/tcp" >/dev/null
+  done
   # QUIC-family (Hysteria2 / TUIC) commonly on UDP
   ufw allow 443/udp >/dev/null
   ufw --force enable >/dev/null

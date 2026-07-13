@@ -6,13 +6,23 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=zetavpn
+Group=zetavpn
 WorkingDirectory=/etc/sing-box
 ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=1000000
+# install.sh chowns /etc/sing-box and the cert dir to 'zetavpn' so this
+# non-root user can write its cache file and read its config + TLS certs.
 AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
 NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# sing-box writes its Clash-API cache file under here (experimental.cache_file
+# in the generated config) — the only path it needs write access to.
+ReadWritePaths=/etc/sing-box
 
 [Install]
 WantedBy=multi-user.target

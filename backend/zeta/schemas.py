@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Rejects control characters (incl. \n \r \0) that could break out of a single
+# line of subprocess stdin (e.g. chpasswd's "user:pass\n" protocol) or corrupt
+# logs/config text. Applied to any free-text field that flows into a shell
+# subprocess or a stats-key format that uses plain-text delimiters.
+_NO_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _reject_control_chars(value: str, field_name: str) -> str:
+    if _NO_CONTROL_CHARS_RE.search(value):
+        raise ValueError(f"{field_name} must not contain control characters")
+    return value
 
 
 # --- Auth --------------------------------------------------------------------
@@ -55,7 +68,10 @@ class InboundBase(BaseModel):
     core: str = "xray"
     protocol: str
     listen: str = "0.0.0.0"
-    port: int = Field(ge=1, le=65535)
+    # Optional: falls back to a sensible per-protocol/transport default (see
+    # core/protocols.default_port) when omitted — and is ignored entirely
+    # for WS-family transports, which are always forced to :80.
+    port: int | None = Field(default=None, ge=1, le=65535)
     network: str = "tcp"
     security: str = "none"
     settings: dict = Field(default_factory=dict)
@@ -91,6 +107,10 @@ class InboundOut(BaseModel):
     protocol: str
     listen: str
     port: int
+    # Set only for WS-family transports — xray's real (loopback-only) listen
+    # port; nginx proxies the public `port` to it (see core/nginx.py). None
+    # for everything else, where xray binds `port` directly.
+    internal_port: int | None = None
     network: str
     security: str
     settings: dict
@@ -109,23 +129,57 @@ class ClientCreate(BaseModel):
     uuid: str | None = None
     password: str | None = None
     flow: str = ""
-    limit_ip: int = 0
-    total_gb: float = 0  # convenience: gigabytes, converted to bytes on save
-    expiry_days: int = 0  # convenience: days from now, converted to epoch ms
+    limit_ip: int = Field(default=0, ge=0)
+    total_gb: float = Field(default=0, ge=0)  # convenience: gigabytes, converted to bytes on save
+    expiry_days: int = Field(default=0, ge=0)  # convenience: days from now, converted to epoch ms
     enabled: bool = True
     sub_id: str = ""
     comment: str = ""
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email(cls, v: str) -> str:
+        _reject_control_chars(v, "email")
+        # Xray's stats keys are "scope>>>key>>>_>>>direction" — a ">" in the
+        # email would corrupt that format and silently hide the client's
+        # traffic from query_stats(), defeating quota enforcement.
+        if ">" in v:
+            raise ValueError("email must not contain '>'")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def _validate_password(cls, v: str | None) -> str | None:
+        if v is not None:
+            _reject_control_chars(v, "password")
+        return v
 
 
 class ClientUpdate(BaseModel):
     email: str | None = None
     password: str | None = None
     flow: str | None = None
-    limit_ip: int | None = None
-    total_gb: float | None = None
-    expiry_days: int | None = None
+    limit_ip: int | None = Field(default=None, ge=0)
+    total_gb: float | None = Field(default=None, ge=0)
+    expiry_days: int | None = Field(default=None, ge=0)
     enabled: bool | None = None
     comment: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email(cls, v: str | None) -> str | None:
+        if v is not None:
+            _reject_control_chars(v, "email")
+            if ">" in v:
+                raise ValueError("email must not contain '>'")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def _validate_password(cls, v: str | None) -> str | None:
+        if v is not None:
+            _reject_control_chars(v, "password")
+        return v
 
 
 class ClientOut(BaseModel):
@@ -140,6 +194,12 @@ class ClientOut(BaseModel):
     total_bytes: int
     expiry_time: int
     enabled: bool
+    ip_limit_exceeded: bool = False
+    # Live connection info from the core's access log / Clash API — not DB
+    # columns, populated only by list_clients() which has recent poll data;
+    # other endpoints correctly default to "no known activity yet".
+    online: bool = False
+    online_ips: list[str] = Field(default_factory=list)
     sub_id: str
     comment: str
     up: int
@@ -149,6 +209,7 @@ class ClientOut(BaseModel):
 
 class ClientLink(BaseModel):
     email: str
+    sub_id: str
     link: str
     qr: str | None = None
 
@@ -158,9 +219,17 @@ class ClientLink(BaseModel):
 class SSHAccountCreate(BaseModel):
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=1, max_length=128)
-    max_login: int = 1
-    expiry_days: int = 30
+    max_login: int = Field(default=1, ge=0)
+    expiry_days: int = Field(default=30, ge=0)
     comment: str = ""
+
+    @field_validator("username", "password")
+    @classmethod
+    def _validate_no_control_chars(cls, v: str, info) -> str:  # noqa: ANN001
+        # `chpasswd` reads "username:password\n" lines from stdin — a newline
+        # (or NUL) in either field lets the value inject an extra line and
+        # rewrite an arbitrary account's password (e.g. root's).
+        return _reject_control_chars(v, info.field_name)
 
 
 class SSHAccountOut(BaseModel):
@@ -194,6 +263,12 @@ class ProtocolInfo(BaseModel):
     udp: bool
     supports_flow: bool
     notes: str
+    # Sensible default public port for the *default* transport; the frontend
+    # recomputes this per-transport-selection via ports_by_network below
+    # (ws-family transports are always 80 — see core/protocols.py).
+    default_port: int
+    ports_by_network: dict[str, int]
+    ws_family_networks: list[str]
 
 
 class ApplyResult(BaseModel):

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Remove ZetaVPN. Keeps Xray/sing-box binaries by default; pass --purge to also
-# remove the cores and all data.
+# remove the cores, SSH-stack config, firewall/fail2ban rules and all data.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -22,13 +22,49 @@ systemctl daemon-reload
 
 rm -f /usr/local/bin/zeta
 crontab -l 2>/dev/null | grep -v 'zeta expire-check' | crontab - 2>/dev/null || true
-rm -f /etc/nginx/conf.d/zeta.conf; systemctl reload nginx 2>/dev/null || true
+rm -f /etc/nginx/conf.d/zeta.conf /etc/nginx/conf.d/zeta-gzip.conf /etc/nginx/zeta-inbounds.conf
+systemctl reload nginx 2>/dev/null || true
+# The panel process is already gone (units removed above), so its sudo
+# delegation is dead weight either way — always drop it.
+rm -f /etc/sudoers.d/zetavpn-panel /usr/local/sbin/zeta-privileged
 
 if [ "$PURGE" -eq 1 ]; then
-  warn "Purging cores, configs and data"
+  warn "Purging cores, SSH-stack config, firewall rules and data"
   rm -f "$XRAY_BIN" "$SINGBOX_BIN"
-  rm -rf "$XRAY_DIR" "$SINGBOX_DIR" "$ZETA_CERT_DIR" "$ZETA_HOME"
+  rm -rf "$XRAY_DIR" "$SINGBOX_DIR" "$ZETA_CERT_DIR" "$ZETA_HOME" /var/log/zetavpn
   rm -f /etc/sysctl.d/99-zeta.conf /etc/ssh/sshd_config.d/zeta.conf
+
+  # SSH stack: stop the services and drop ZetaVPN's own config for them.
+  # The dropbear/stunnel4 *packages* are left installed (apt remove could
+  # affect something unrelated to ZetaVPN) but disabled, since the config
+  # that made them useful for tunnelling is gone.
+  systemctl disable --now dropbear 2>/dev/null || true
+  systemctl disable --now stunnel4 2>/dev/null || true
+  rm -f /etc/stunnel/stunnel.conf /etc/stunnel/stunnel.pem
+  # Revert install_ssh_stack.sh's sed edits to the dropbear package config
+  # (harmless while the service is disabled, but leaving it means a later
+  # `apt install --reinstall dropbear` or manual re-enable would silently
+  # come back up on ZetaVPN's ports instead of the package default).
+  if [ -f /etc/default/dropbear ]; then
+    sed -i "s/^NO_START=.*/NO_START=1/" /etc/default/dropbear
+    sed -i '/^DROPBEAR_EXTRA_ARGS=/d' /etc/default/dropbear
+  fi
+
+  # Revert exactly the ufw rules firewall.sh added (same ports/defaults it
+  # uses — a custom install may have used different SSH-stack ports, which
+  # this can't know in retrospect; best-effort).
+  if command -v ufw >/dev/null 2>&1; then
+    for p in 22 80 443 149 143 445 8880; do
+      ufw delete allow "${p}/tcp" >/dev/null 2>&1 || true
+    done
+    ufw delete allow 443/udp >/dev/null 2>&1 || true
+  fi
+  rm -f /etc/fail2ban/jail.d/zeta-sshd.conf
+  systemctl restart fail2ban 2>/dev/null || true
+
+  # Dedicated service account (see install.sh step 3b).
+  userdel -r zetavpn 2>/dev/null || true
+
   ok "ZetaVPN fully removed."
 else
   ok "ZetaVPN services removed. Data kept in ${ZETA_HOME} (use --purge to delete)."
