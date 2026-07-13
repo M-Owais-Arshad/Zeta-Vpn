@@ -12,13 +12,13 @@
 ### 1. One-command (from GitHub)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/zetavpn/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
 ```
 
 ### 2. From a local clone
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/zetavpn.git
+git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git
 cd zetavpn
 sudo ./install.sh
 ```

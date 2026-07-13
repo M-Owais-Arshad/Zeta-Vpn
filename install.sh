@@ -18,7 +18,7 @@ set -euo pipefail
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ZETA_HOME="${ZETA_HOME:-/opt/zetavpn}"
-ZETA_REPO="${ZETA_REPO:-https://github.com/YOUR_GITHUB_USERNAME/zetavpn.git}"
+ZETA_REPO="${ZETA_REPO:-https://github.com/M-Owais-Arshad/Zeta-Vpn.git}"
 ZETA_BRANCH="${ZETA_BRANCH:-main}"
 PANEL_PORT="${PANEL_PORT:-2096}"
 WS_PORT="${WS_PORT:-8880}"
@@ -75,9 +75,6 @@ if [ -d "${SELF_DIR}/backend" ] && [ -d "${SELF_DIR}/frontend" ]; then
     cp -a "${SELF_DIR}/." "${ZETA_HOME}/"
   fi
 else
-  if echo "$ZETA_REPO" | grep -q "YOUR_GITHUB_USERNAME"; then
-    die "Set ZETA_REPO=https://github.com/<you>/zetavpn.git (or run install.sh from a checkout)."
-  fi
   if [ -d "${ZETA_HOME}/.git" ]; then
     msg "Updating existing ZetaVPN checkout"
     git -C "$ZETA_HOME" fetch --depth 1 origin "$ZETA_BRANCH" && git -C "$ZETA_HOME" reset --hard "origin/${ZETA_BRANCH}"

@@ -44,13 +44,13 @@ together by a FastAPI backend and installed straight from GitHub.
 On a fresh **Debian 11/12** or **Ubuntu 20.04/22.04/24.04** VPS, as **root**:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/zetavpn/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
 ```
 
 …or clone and run locally:
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/zetavpn.git
+git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git
 cd zetavpn
 sudo ./install.sh
 ```
@@ -64,8 +64,7 @@ sudo ZETA_DOMAIN=vpn.example.com ./install.sh --yes
 When it finishes you'll get the **panel URL, username and password**. Open the URL, sign in, set your
 domain under **Settings**, then add an inbound and a client.
 
-> Replace `YOUR_GITHUB_USERNAME` with your GitHub account after you push this repo. The installer
-> also honours `ZETA_REPO=…` if your repo is named differently.
+> The installer also honours `ZETA_REPO=…` if you're installing from a fork.
 
 ---
 
