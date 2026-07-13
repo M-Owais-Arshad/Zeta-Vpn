@@ -1,4 +1,5 @@
-/* ZetaVPN — admin single-page app (framework-free). */
+/* ZetaVPN — admin single-page app (framework-free).
+ * ZetaVPN by Muhammad Owais · © 2026 · AGPL-3.0. */
 (function () {
   "use strict";
   var Z = window.Zeta;
@@ -1097,7 +1098,7 @@
   // mirrored here; a custom install that changed them would need this list
   // updated to match). SSH-over-WebSocket is reachable two ways: directly
   // on its own port, and via nginx on :80 at the WS path (the
-  // "bug host"/CDN-friendly route autoscript-style apps expect) — both are
+  // "bug host"/CDN-friendly route tunnelling apps expect) — both are
   // real, simultaneously-working routes to the exact same backend.
   var SSH_PORTS = [
     { label: "OpenSSH", value: function (h) { return h + ":22"; } },

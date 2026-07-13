@@ -6,6 +6,8 @@
 
 **An all-in-one, self-hosted VPN / proxy panel — every protocol, one command, one portal.**
 
+<sub>**by Muhammad Owais**</sub>
+
 ZetaVPN turns a fresh Debian/Ubuntu VPS into a full proxy server managed from a modern
 web dashboard: **Xray-core** + **sing-box** + a complete **SSH tunnelling stack**, wired
 together by a FastAPI backend and installed straight from GitHub.
@@ -33,9 +35,6 @@ together by a FastAPI backend and installed straight from GitHub.
   hashing, TOTP 2FA, login brute-force lockout, session revocation on password change, verified
   binary downloads, fail2ban + ufw. No default passwords, ever.
 - **`zeta` CLI.** A terminal menu for status, restarts, updates, backups and quick SSH accounts.
-
-> The design is grounded in a [deep-research report](docs/RESEARCH.md) comparing 3x-ui, Marzban,
-> Hiddify, S-UI and the SEA "AutoScript" ecosystem — see [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 ---
 
@@ -118,7 +117,6 @@ zeta backup          # tar up data + .env
 | [docs/PROTOCOLS.md](docs/PROTOCOLS.md) | Every protocol, transport, and how to configure it |
 | [docs/API.md](docs/API.md) | REST API + subscription endpoint reference |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, hardening defaults, and known CVE classes |
-| [docs/RESEARCH.md](docs/RESEARCH.md) | The full research & architecture report behind the design |
 
 ---
 
@@ -138,7 +136,7 @@ zetavpn/
 ├── systemd/                # zeta-panel / zeta-xray / zeta-singbox / zeta-ws units
 ├── proxies/ws-proxy.py     # SSH-over-WebSocket proxy
 ├── config/templates/       # reference inbound JSON for each protocol
-└── docs/                   # documentation + research report
+└── docs/                   # documentation
 ```
 
 ---
@@ -152,9 +150,14 @@ exposing it to the internet, and always put it behind a domain + TLS.
 
 ## ⚖️ License & responsible use
 
-MIT — see [LICENSE](LICENSE). ZetaVPN is for running **your own** servers and providing access to
-users you are authorised to serve. You are responsible for complying with the laws and terms that
-apply to you. Built on the excellent open-source [Xray-core](https://github.com/XTLS/Xray-core) and
+**ZetaVPN by Muhammad Owais** — licensed under **AGPL-3.0** (see [LICENSE](LICENSE)).
+You're free to use, self-host and modify it, but if you run a modified version — including as a
+network service — you must **publish your source and keep clear attribution to the original author,
+Muhammad Owais**. Forks are welcome under those terms.
+
+ZetaVPN is for running **your own** servers and providing access to users you are authorised to
+serve. You are responsible for complying with the laws and terms that apply to you. Built on the
+excellent open-source [Xray-core](https://github.com/XTLS/Xray-core) and
 [sing-box](https://github.com/SagerNet/sing-box).
 
-<div align="center"><sub>ZetaVPN · made with the Zeta stack</sub></div>
+<div align="center"><sub><b>ZetaVPN</b> by Muhammad Owais · © 2026 · AGPL-3.0</sub></div>

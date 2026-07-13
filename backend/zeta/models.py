@@ -1,8 +1,7 @@
 """SQLAlchemy ORM models for ZetaVPN.
 
-The schema mirrors the proven inbound/client shape used by the Xray panel family
-(x-ui / 3x-ui) but is normalised into real relational tables and extended to also
-cover sing-box inbounds and native SSH accounts.
+A normalised, relational inbound/client schema (real tables and foreign keys,
+not JSON blobs) that also covers sing-box inbounds and native SSH accounts.
 """
 
 from __future__ import annotations

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 #  ZetaVPN — one-command installer
+#  ZetaVPN by Muhammad Owais · (c) 2026 · AGPL-3.0
 #
 #  Fresh Debian/Ubuntu VPS, as root:
 #     bash <(curl -fsSL https://raw.githubusercontent.com/<you>/zetavpn/main/install.sh)

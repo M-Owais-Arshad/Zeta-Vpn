@@ -1,5 +1,7 @@
 """ZetaVPN panel — FastAPI application entrypoint.
 
+ZetaVPN by Muhammad Owais · © 2026 · AGPL-3.0.
+
 Serves the REST API under ``{base}/api``, the public subscription endpoints under
 ``{base}/sub`` and the self-contained web UI portal from ``frontend/``.
 """

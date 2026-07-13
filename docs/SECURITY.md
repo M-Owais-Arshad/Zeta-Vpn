@@ -39,8 +39,8 @@ panel process itself does **not** run as root:
   (`systemctl restart/stop`) — are delegated through a narrowly scoped **NOPASSWD sudoers rule**
   (`/etc/sudoers.d/zetavpn-panel`, regenerated on every install/update) instead of the whole
   HTTP-facing app running as root. A bug in the API surface can no longer be turned into an
-  arbitrary-file-write-as-root the way it could when the process itself was root (the
-  CVE-2026-55477 pattern in 3x-ui).
+  arbitrary-file-write-as-root the way it could when the process itself was root (a well-known
+  RCE class in root-running admin panels).
 - The proxy **cores** (`zeta-xray`, `zeta-singbox`) additionally run with `ProtectSystem=strict`,
   `ProtectHome=true` and scoped `AmbientCapabilities` (`CAP_NET_BIND_SERVICE` to bind low ports
   without root) — they never need `sudo` and get the tightest sandbox of the four units.
@@ -66,11 +66,11 @@ behind nginx + client-certificate or IP allow-listing.
 
 ## Known CVE classes to avoid (and how ZetaVPN does)
 
-| Class | Seen in | ZetaVPN mitigation |
+| Class | Typical cause | ZetaVPN mitigation |
 |---|---|---|
-| Default credentials | x-ui/S-UI `admin/admin` | Random/required password, no defaults |
-| Insecure update fetch | panel auto-updaters | SHA256-verified downloads; `zeta update` uses git |
-| Authenticated config-injection → RCE | 3x-ui advisory | Configs rendered from typed DB fields; JSON passed to cores, not shelled |
+| Default credentials | shipped `admin/admin` logins | Random/required password, no defaults |
+| Insecure update fetch | unverified auto-updaters | SHA256-verified downloads; `zeta update` uses git |
+| Authenticated config-injection → RCE | string-built core configs run as root | Configs rendered from typed DB fields; JSON passed to cores, not shelled; cores run non-root |
 
 ## Hardening you should still do
 

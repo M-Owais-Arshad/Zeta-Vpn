@@ -92,6 +92,6 @@ vanilla JS (`api.js` fetch wrapper + `app.js` views) and a hand-written styleshe
 ## Why two cores?
 
 No single core covers everything. Xray owns REALITY/XTLS-Vision and the widest client
-compatibility; sing-box owns the QUIC generation (Hysteria2, TUIC). Running both as separate
-services — each with its own config and lifecycle — is the same pattern proven by S-UI and Hiddify.
-See [RESEARCH.md](RESEARCH.md) §3–4 for the full rationale.
+compatibility; sing-box owns the QUIC generation (Hysteria2, TUIC). ZetaVPN runs both as separate
+services — each with its own config and lifecycle — so every protocol is served by the core that
+does it best.
