@@ -228,14 +228,15 @@
   var PROTOCOLS = [];
   var state = { autoOpen: null };
 
-  // Hash routes: "#/dashboard", "#/inbounds", "#/inbounds/3/clients",
-  // "#/clients", "#/ssh", "#/settings". Refresh/back/forward all work and
+  // Hash routes: "#/dashboard", "#/inbounds", "#/clients", "#/ssh",
+  // "#/settings". "#/inbounds/3/clients" is kept for old links — it opens the
+  // unified Clients page focused on that inbound. Refresh/back/forward work and
   // any page can be bookmarked.
   function parseRoute() {
     var hash = (location.hash || "#/dashboard").replace(/^#\/?/, "");
     var parts = hash.split("/");
     var m = hash.match(/^inbounds\/(\d+)\/clients$/);
-    if (m) return { view: "inboundClients", ibId: parseInt(m[1], 10) };
+    if (m) return { view: "clients", focusIbId: parseInt(m[1], 10) };
     var view = parts[0] || "dashboard";
     if (!VIEWS[view]) view = "dashboard";
     return { view: view, ibId: null };
@@ -257,8 +258,7 @@
     var fresh = force || key !== lastRouteKey;
     lastRouteKey = key;
     document.querySelectorAll(".nav-item[data-view]").forEach(function (n) {
-      var v = r.view === "inboundClients" ? "inbounds" : r.view;
-      n.classList.toggle("active", n.dataset.view === v);
+      n.classList.toggle("active", n.dataset.view === r.view);
     });
     $(".sidebar").classList.remove("open");
     $("#scrim").classList.remove("show");
@@ -545,7 +545,7 @@
     var q = $("#q-inb"); if (q) wireSearch(q, page.querySelector("tbody"));
 
     page.querySelectorAll("[data-clients]").forEach(function (b) {
-      b.onclick = function () { navigate("/inbounds/" + b.dataset.clients + "/clients"); };
+      b.onclick = function () { state.focusInbound = b.dataset.clients; navigate("/clients"); };
     });
     page.querySelectorAll("[data-info]").forEach(function (b) {
       b.onclick = function () {
@@ -901,95 +901,78 @@
   }
 
   // Per-inbound clients
-  VIEWS.inboundClients = async function (page, route, ep) {
-    var ib, list;
-    try {
-      ib = await Z.get("/inbounds/" + route.ibId);
-      list = await Z.get("/inbounds/" + route.ibId + "/clients");
-    } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
-    if (stale(ep)) return;
-    setTitle("Clients · " + (ib.remark || ib.tag), ib.protocol.toUpperCase() + " on port " + ib.port);
-    var items = list.map(function (c) { return { c: c, ib: ib }; });
-    var rows = items.map(function (it) { return clientRow(it.c, it.ib, false); }).join("");
-
-    page.innerHTML =
-      '<a class="btn ghost sm back-link" href="#/inbounds">' + IC.back + " All inbounds</a>" +
-      '<div class="card pad-lg"><div class="card-head"><h3>' + plural(list.length, "client") + "</h3>" +
-      '<div class="tools">' +
-        (list.length > 3 ? '<span class="search">' + IC.search + '<input id="q-cli" placeholder="Search…"></span>' : "") +
-        '<button class="btn primary" id="add-client">' + IC.plus + " Add client</button>" +
-      "</div></div>" +
-      (list.length
-        ? '<div class="table-wrap"><table class="wide">' + clientHead(false) + "<tbody>" + rows + "</tbody></table></div>"
-        : emptyState(IC.users, "No clients yet",
-            "A client is one user's credential for this inbound — each gets their own link, QR code and usage limits.",
-            '<button class="btn primary" id="empty-add">' + IC.plus + " Add your first client</button>")) +
-      "</div>";
-
-    function openAdd() { clientModal(ib, null, reload); }
-    $("#add-client").onclick = openAdd;
-    var ea = $("#empty-add"); if (ea) ea.onclick = openAdd;
-    var q = $("#q-cli"); if (q) wireSearch(q, page.querySelector("tbody"));
-    wireClientActions(page, items, reload);
-  };
-
-  // All clients across every inbound
+  // The single Clients page: every inbound is its own collapsible block (one
+  // block = one protocol/inbound), each with its own client table and Add
+  // button. Reached from the sidebar, or from an inbound's "N clients" button
+  // (which focuses+expands just that block). No separate nested view.
   VIEWS.clients = async function (page, route, ep) {
-    setTitle("Clients", "Every proxy user across all inbounds");
+    setTitle("Clients", "Proxy users, grouped by inbound");
     var ibs;
     try { ibs = await Z.get("/inbounds"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
     var lists = await Promise.all(ibs.map(function (ib) {
       return Z.get("/inbounds/" + ib.id + "/clients").catch(function () { return []; });
     }));
     if (stale(ep)) return;
-    var items = [];
-    ibs.forEach(function (ib, i) {
-      lists[i].forEach(function (c) { items.push({ c: c, ib: ib }); });
-    });
 
-    var chips = ibs.length > 1
-      ? '<div class="tabs" id="ib-chips"><button class="tab active" data-fib="">All</button>' +
-        ibs.map(function (ib) { return '<button class="tab" data-fib="' + ib.id + '">' + esc(ib.remark || ib.tag) + "</button>"; }).join("") +
-        "</div>"
-      : "";
+    var focus = route.focusIbId || state.focusInbound || null;
+    state.focusInbound = null;
+    var allItems = [];
+    var total = 0;
+
+    var blocks = ibs.map(function (ib, i) {
+      var cls = lists[i];
+      total += cls.length;
+      cls.forEach(function (c) { allItems.push({ c: c, ib: ib }); });
+      // With a focus target only that block opens; otherwise all open.
+      var open = focus ? String(ib.id) === String(focus) : true;
+      var body = cls.length
+        ? '<div class="table-wrap"><table class="wide">' + clientHead(false) + "<tbody>" +
+            cls.map(function (c) { return clientRow(c, ib, false); }).join("") + "</tbody></table></div>"
+        : '<p class="hint cg-empty">No clients on this inbound yet — click <b>Add</b>.</p>';
+      return '<details class="cli-group"' + (open ? " open" : "") + ' data-ibblock="' + ib.id + '">' +
+        "<summary><span class=\"cg-left\">" +
+          '<span class="badge ' + (ib.enabled ? "on" : "off") + '">' + (ib.enabled ? "Active" : "Off") + "</span>" +
+          "<b>" + esc(ib.remark || ib.tag) + "</b>" +
+          '<span class="badge proto">' + esc(ib.protocol) + "</span>" +
+          '<span class="badge core">' + esc(ib.core) + "</span>" +
+          '<span class="muted mono">:' + ib.port + "</span>" +
+        "</span><span class=\"cg-right\">" +
+          '<span class="muted">' + plural(cls.length, "client") + "</span>" +
+          '<button class="btn sm primary" data-addcli="' + ib.id + '">' + IC.plus + " Add</button>" +
+        "</span></summary>" + body + "</details>";
+    }).join("");
 
     page.innerHTML =
-      chips +
-      '<div class="card pad-lg"><div class="card-head"><h3>' + plural(items.length, "client") + "</h3>" +
-      '<div class="tools">' +
-        (items.length > 3 ? '<span class="search">' + IC.search + '<input id="q-cli" placeholder="Search…"></span>' : "") +
-      "</div></div>" +
-      (items.length
-        ? '<div class="table-wrap"><table class="wide">' + clientHead(true) + "<tbody>" +
-          items.map(function (it, i) { return clientRow(it.c, it.ib, true).replace("<tr>", '<tr data-row-ib="' + it.ib.id + '">'); }).join("") +
-          "</tbody></table></div>"
-        : emptyState(IC.users, "No clients anywhere yet",
-            ibs.length ? "Pick an inbound and add your first client to it." : "Create an inbound first, then add clients to it.",
-            '<a class="btn primary" href="#/inbounds">Go to inbounds</a>')) +
-      "</div>";
+      '<div class="card-head clients-head"><h3>' + plural(total, "client") + " across " + plural(ibs.length, "inbound") + "</h3>" +
+      (total > 3 ? '<span class="search">' + IC.search + '<input id="q-cli" placeholder="Search all clients…"></span>' : "") +
+      "</div>" +
+      (ibs.length
+        ? blocks
+        : emptyState(IC.users, "No inbounds yet",
+            "Clients belong to an inbound — create your first inbound, then add clients to it.",
+            '<a class="btn primary" href="#/inbounds">Go to inbounds</a>'));
 
-    // One combined filter — the search box and the inbound chips both funnel
-    // through it, so neither can clobber the other's row visibility.
-    var q = $("#q-cli"), chipWrap = $("#ib-chips"), curIb = "";
-    function applyFilter() {
-      var query = q ? q.value.toLowerCase() : "";
-      page.querySelectorAll("[data-row-ib]").forEach(function (tr) {
-        var okIb = !curIb || tr.dataset.rowIb === curIb;
-        var okQ = !query || tr.textContent.toLowerCase().indexOf(query) !== -1;
-        tr.style.display = okIb && okQ ? "" : "none";
+    page.querySelectorAll("[data-addcli]").forEach(function (b) {
+      b.onclick = function (e) {
+        e.preventDefault(); e.stopPropagation(); // it's inside <summary>
+        var ib = ibs.find(function (x) { return String(x.id) === b.dataset.addcli; });
+        if (ib) clientModal(ib, null, reload);
+      };
+    });
+    var q = $("#q-cli");
+    if (q) q.oninput = function () {
+      var query = q.value.toLowerCase();
+      page.querySelectorAll("[data-ibblock]").forEach(function (d) {
+        var any = false;
+        d.querySelectorAll("tbody tr").forEach(function (tr) {
+          var hit = !query || tr.textContent.toLowerCase().indexOf(query) !== -1;
+          tr.style.display = hit ? "" : "none";
+          if (hit) any = true;
+        });
+        if (query) d.open = any; // auto-expand blocks that contain a match
       });
-    }
-    if (q) q.oninput = applyFilter;
-    if (chipWrap) {
-      chipWrap.addEventListener("click", function (e) {
-        var b = e.target.closest(".tab");
-        if (!b) return;
-        chipWrap.querySelectorAll(".tab").forEach(function (t) { t.classList.toggle("active", t === b); });
-        curIb = b.dataset.fib;
-        applyFilter();
-      });
-    }
-    wireClientActions(page, items, reload);
+    };
+    wireClientActions(page, allItems, reload);
   };
 
   function clientModal(ib, existing, refreshFn) {
