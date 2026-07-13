@@ -721,7 +721,7 @@
       if (sc === "reality") {
         html += '<p class="hint">' + (isEdit && ss0.reality
           ? "Existing REALITY keys are kept as-is."
-          : "REALITY keys, shortId and camouflage SNI are generated automatically on save (dest: www.microsoft.com).") + "</p>";
+          : "REALITY keys, shortId and camouflage SNI are generated automatically on save (dest: www.apple.com).") + "</p>";
       }
       dyn.innerHTML = html;
     }
@@ -753,8 +753,8 @@
               privateKey: keys.privateKey,
               publicKey: keys.publicKey,
               shortIds: [keys.shortId],
-              dest: "www.microsoft.com:443",
-              serverNames: ["www.microsoft.com"],
+              dest: "www.apple.com:443",
+              serverNames: ["www.apple.com"],
               fingerprint: "chrome",
             };
           }

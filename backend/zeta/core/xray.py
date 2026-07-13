@@ -62,8 +62,8 @@ def build_stream_settings(inbound: Inbound) -> dict:
     ``inbound.stream_settings`` is a dict keyed by transport/security name, e.g.::
 
         {"ws": {"path": "/zeta", "host": "cdn.example.com"},
-         "reality": {"dest": "www.microsoft.com:443",
-                     "serverNames": ["www.microsoft.com"],
+         "reality": {"dest": "www.apple.com:443",
+                     "serverNames": ["www.apple.com"],
                      "privateKey": "...", "shortIds": [""]}}
     """
     ss = inbound.stream_settings or {}
@@ -126,9 +126,9 @@ def build_stream_settings(inbound: Inbound) -> dict:
         r = ss.get("reality", {})
         stream["realitySettings"] = {
             "show": False,
-            "dest": r.get("dest", "www.microsoft.com:443"),
+            "dest": r.get("dest", "www.apple.com:443"),
             "xver": r.get("xver", 0),
-            "serverNames": r.get("serverNames", ["www.microsoft.com"]),
+            "serverNames": r.get("serverNames", ["www.apple.com"]),
             "privateKey": r.get("privateKey", ""),
             "shortIds": r.get("shortIds", [""]),
             "fingerprint": r.get("fingerprint", "chrome"),

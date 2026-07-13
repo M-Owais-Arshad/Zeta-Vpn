@@ -108,8 +108,12 @@ def _seed_reality(stream: dict) -> dict:
         r["publicKey"] = keys["publicKey"]
     if not r.get("shortIds"):
         r["shortIds"] = [xray.gen_short_id()]
-    r.setdefault("dest", "www.microsoft.com:443")
-    r.setdefault("serverNames", ["www.microsoft.com"])
+    # www.microsoft.com does NOT complete the REALITY handshake (its TLS/CDN
+    # stack is incompatible — verified: xray logs "handshake did not complete
+    # successfully"), which silently breaks every REALITY inbound. apple.com is
+    # a stable TLS-1.3 dest with huge collateral (rarely blocked).
+    r.setdefault("dest", "www.apple.com:443")
+    r.setdefault("serverNames", ["www.apple.com"])
     r.setdefault("fingerprint", "chrome")
     stream["reality"] = r
     return stream

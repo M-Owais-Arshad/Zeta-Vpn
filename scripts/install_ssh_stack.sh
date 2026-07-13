@@ -20,21 +20,49 @@ apt_install openssh-server dropbear stunnel4 net-tools
 grep -qxF '/bin/false' /etc/shells 2>/dev/null || echo '/bin/false' >> /etc/shells
 grep -qxF '/usr/sbin/nologin' /etc/shells 2>/dev/null || echo '/usr/sbin/nologin' >> /etc/shells
 mkdir -p /etc/ssh/sshd_config.d
-cat > /etc/ssh/sshd_config.d/zeta.conf <<'CONF'
-# Managed by ZetaVPN — SSH tunnelling
+# Filename sorts BEFORE cloud-image drop-ins (e.g. 60-cloudimg-settings.conf).
+# sshd uses the FIRST obtained value per keyword, so `PasswordAuthentication yes`
+# here overrides the cloud image's default of `no` — essential, because SSH
+# tunnelling accounts authenticate with username+password, not keys. Without
+# this every generated SSH account fails on OpenSSH with "Permission denied
+# (publickey)". Drop any older-named copy so it can't shadow this one.
+rm -f /etc/ssh/sshd_config.d/zeta.conf
+cat > /etc/ssh/sshd_config.d/00-zeta.conf <<'CONF'
+# Managed by ZetaVPN — SSH tunnelling (loads before cloud-image defaults)
+PasswordAuthentication yes
+KbdInteractiveAuthentication yes
 AllowTcpForwarding yes
 GatewayPorts yes
 PermitTunnel yes
 ClientAliveInterval 60
 ClientAliveCountMax 3
 CONF
-systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
-ok "OpenSSH configured for tunnelling"
+# Validate before reloading so a bad drop-in can't lock out SSH.
+if sshd -t 2>/dev/null; then
+  systemctl reload ssh 2>/dev/null || systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+else
+  warn "sshd config test failed — leaving SSH untouched"
+fi
+ok "OpenSSH configured for tunnelling (password auth enabled)"
 
 # ---- Dropbear (lightweight SSH on extra ports) ----
+# The systemd unit runs `dropbear -p "$DROPBEAR_PORT" -W "$DROPBEAR_RECEIVE_WINDOW"
+# $DROPBEAR_EXTRA_ARGS`. Ubuntu ships /etc/default/dropbear with those first two
+# COMMENTED OUT (`#DROPBEAR_PORT=22`), so a naive `s/^DROPBEAR_PORT=.*/…/` matches
+# nothing — the main port never binds and `-p ""`/`-W ""` go empty. Set a helper
+# that uncomments-or-appends each key so the main port (149) actually comes up
+# alongside the alt port (143).
 if [ -f /etc/default/dropbear ]; then
-  sed -i "s/^NO_START=.*/NO_START=0/" /etc/default/dropbear
-  sed -i "s/^DROPBEAR_PORT=.*/DROPBEAR_PORT=${DROPBEAR_PORT_MAIN}/" /etc/default/dropbear
+  set_kv() { # key value file
+    if grep -qE "^#?${1}=" "$3"; then
+      sed -i "s|^#\?${1}=.*|${1}=${2}|" "$3"
+    else
+      echo "${1}=${2}" >> "$3"
+    fi
+  }
+  set_kv NO_START 0 /etc/default/dropbear
+  set_kv DROPBEAR_PORT "${DROPBEAR_PORT_MAIN}" /etc/default/dropbear
+  set_kv DROPBEAR_RECEIVE_WINDOW 65536 /etc/default/dropbear
   if grep -q '^DROPBEAR_EXTRA_ARGS=' /etc/default/dropbear; then
     sed -i "s|^DROPBEAR_EXTRA_ARGS=.*|DROPBEAR_EXTRA_ARGS=\"-p ${DROPBEAR_PORT_ALT}\"|" /etc/default/dropbear
   else

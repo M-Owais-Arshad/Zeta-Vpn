@@ -16,7 +16,7 @@
 ### Choosing one
 
 - **No domain yet?** Use **VLESS + REALITY** — the panel auto-generates the X25519 keypair and
-  shortId, and borrows a real site's TLS handshake (default `www.microsoft.com`). Nothing to buy.
+  shortId, and borrows a real site's TLS handshake (default `www.apple.com`). Nothing to buy.
 - **Behind Cloudflare / a CDN?** Use **VLESS-WS-TLS** or **VMess-WS-TLS** and point the CDN at your
   WS path.
 - **Unstable mobile network?** Add **Hysteria2** (needs your domain's cert).

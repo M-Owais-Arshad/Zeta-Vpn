@@ -150,7 +150,11 @@ UDP_ONLY_PROTOCOLS = {"hysteria2", "tuic"}
 # while staying fully editable in the API/UI for anyone who wants otherwise.
 _DIRECT_DEFAULT_PORTS = {
     "vless": 443,
-    "vmess": 80,  # default transport is ws -> nginx-fronted anyway
+    # vmess's default transport is ws (nginx-fronted on :80), but if an admin
+    # picks a DIRECT transport (tcp/grpc) the auto port must not be 80 — nginx
+    # owns it, so it would always 409. 443 matches vless/trojan and is free on
+    # the standard stack.
+    "vmess": 443,
     "trojan": 443,
     "shadowsocks": 8388,
     "socks": 1080,

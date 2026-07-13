@@ -32,7 +32,7 @@ if [ "$PURGE" -eq 1 ]; then
   warn "Purging cores, SSH-stack config, firewall rules and data"
   rm -f "$XRAY_BIN" "$SINGBOX_BIN"
   rm -rf "$XRAY_DIR" "$SINGBOX_DIR" "$ZETA_CERT_DIR" "$ZETA_HOME" /var/log/zetavpn
-  rm -f /etc/sysctl.d/99-zeta.conf /etc/ssh/sshd_config.d/zeta.conf
+  rm -f /etc/sysctl.d/99-zeta.conf /etc/ssh/sshd_config.d/zeta.conf /etc/ssh/sshd_config.d/00-zeta.conf
 
   # SSH stack: stop the services and drop ZetaVPN's own config for them.
   # The dropbear/stunnel4 *packages* are left installed (apt remove could
