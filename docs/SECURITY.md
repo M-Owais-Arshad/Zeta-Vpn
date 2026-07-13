@@ -1,7 +1,7 @@
 # ZetaVPN — Security
 
-This is a summary of ZetaVPN's threat model and hardening. The full analysis, including the
-published CVE classes for panels in this category, is in [RESEARCH.md](RESEARCH.md) §8.
+This document covers ZetaVPN's threat model, hardening defaults, and the known classes of
+vulnerability it is designed to avoid.
 
 ## Secure-by-default checklist (shipped on)
 

@@ -12,7 +12,7 @@ ZetaVPN turns a fresh Debian/Ubuntu VPS into a full proxy server managed from a 
 web dashboard: **Xray-core** + **sing-box** + a complete **SSH tunnelling stack**, wired
 together by a FastAPI backend and installed straight from GitHub.
 
-`VLESS · VMess · Trojan · Shadowsocks-2022 · REALITY · Hysteria2 · TUIC · SSH-WS/SSL · Dropbear · SlowDNS`
+`VLESS · VMess · Trojan · Shadowsocks-2022 · REALITY · Hysteria2 · TUIC · SSH-WS · SSH-SSL · Dropbear`
 
 </div>
 
@@ -22,7 +22,7 @@ together by a FastAPI backend and installed straight from GitHub.
 
 - **All the protocols, two cores.** Xray-core serves VLESS (REALITY + XTLS-Vision), VMess,
   Trojan, Shadowsocks-2022, SOCKS and HTTP; sing-box adds the QUIC generation — Hysteria2 and
-  TUIC. A native SSH stack (OpenSSH, Dropbear, stunnel/SSL, WebSocket, SlowDNS-ready) rounds it out.
+  TUIC. A native SSH tunnelling stack (OpenSSH, Dropbear, stunnel/SSL, WebSocket) rounds it out.
 - **One-command install from GitHub.** `curl | bash` detects your arch, pulls the core binaries
   from their official releases, sets up systemd services, nginx, TLS (acme.sh), BBR and a firewall.
 - **A real web portal — no build step.** A clean, dark, responsive dashboard (framework-free,

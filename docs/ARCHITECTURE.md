@@ -40,7 +40,7 @@ independent delivery layers — Xray-core, sing-box, and a native SSH stack.
 
 | Table | Role |
 |---|---|
-| `users` | Panel operators; password hash, TOTP, `token_version`. `role` carries `admin` \| `reseller`, but every endpoint currently gates on `role == "admin"` — a `reseller` account can log in but has no scoped permissions yet (deferred post-MVP, see RESEARCH.md §9.7) |
+| `users` | Panel operators; password hash, TOTP, `token_version`. `role` carries `admin` \| `reseller`, but every endpoint currently gates on `role == "admin"` — a `reseller` account can log in but has no scoped permissions yet (deferred post-MVP) |
 | `inbounds` | A proxy listener: `core`, `protocol`, `port`, `network`, `security`, `settings` + `stream_settings` (JSON), traffic counters |
 | `clients` | A credential under an inbound: `uuid`/`password`, `flow`, quota, expiry, `sub_id`, usage |
 | `ssh_accounts` | Native SSH accounts mirrored to system users |

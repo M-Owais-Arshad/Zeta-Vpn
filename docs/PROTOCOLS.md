@@ -57,5 +57,5 @@ tunnelling only).
 `zeta-ws` proxy and pipes to the local SSH server — so SSH traffic looks like ordinary WebSocket
 traffic to a CDN edge.
 
-> Roadmap (config plumbing ready): SlowDNS/DNSTT, BadVPN udpgw, OpenVPN, WireGuard, ShadowTLS,
-> AnyTLS. See [RESEARCH.md](RESEARCH.md) §5 for the full stack.
+> Possible future additions: BadVPN udpgw (UDP-over-SSH for games), OpenVPN, WireGuard, ShadowTLS,
+> AnyTLS. These are not implemented yet.
