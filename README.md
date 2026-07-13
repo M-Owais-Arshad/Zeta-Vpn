@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="frontend/assets/img/logo.svg" width="90" alt="ZetaVPN"/>
+<img src="frontend/assets/img/logo.png" width="90" alt="ZetaVPN"/>
 
 # ZetaVPN
 
