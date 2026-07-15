@@ -806,17 +806,34 @@
     return { port: out[0], extra: out.slice(1) };
   }
 
-  // -------- Boost (elite gaming / low-latency network tuning) --------
+  // -------- Boost & Tuning (elite gaming tuning + Telegram proxy) --------
   VIEWS.tuning = async function (page, route, ep) {
-    setTitle("Boost", "Elite gaming / low-latency network tuning");
-    var tune = { active: false };
+    setTitle("Boost & Tuning", "Elite gaming network tuning & Telegram proxy");
+    var tune = { active: false }, tg = { active: false };
     try { tune = await Z.get("/system/tuning"); } catch (e) { /* degrade if endpoint missing */ }
+    try { tg = await Z.get("/system/tgproxy"); } catch (e) { /* degrade */ }
     if (stale(ep)) return;
+
+    function tgLinks(t) {
+      if (t.active && t.needs_address) return '<p class="hint" style="color:var(--warn)">Set your server address/domain in Settings to generate the proxy link.</p>';
+      if (!t.active || !t.tme_url) return "";
+      return '<div class="modal-sec">Give this to your users</div>' +
+        '<div class="linkbox"><input readonly value="' + esc(t.tme_url) + '"><button class="btn sm" data-copy="' + esc(t.tme_url) + '">' + IC.copy + " Copy</button></div>" +
+        '<a class="btn success block" href="' + esc(t.tme_url) + '" target="_blank" rel="noopener">Open in Telegram</a>';
+    }
+
     page.innerHTML =
+      '<div class="grid cols-2">' +
       '<div class="card pad-lg" id="tune-card"><div class="card-head"><h3>⚡ Elite Gaming Tuning</h3>' +
         '<span class="badge ' + (tune.active ? "on" : "neutral") + '" id="tune-badge">' + (tune.active ? "Active" : "Off") + "</span></div>" +
-        '<p class="hint">One-tap low-latency tuning for mobile gamers: BBR + fair queueing (kills bufferbloat), bigger TCP/UDP buffers, TCP Fast Open, MSS clamp for 4G/5G, deeper NIC queues, the performance CPU governor and data-plane priority. Turning it off restores the server to its exact previous state.</p>' +
-        '<div class="btn-row" id="tune-actions"></div></div>';
+        '<p class="hint">One-tap low-latency tuning for mobile gamers: BBR + fair queueing (kills bufferbloat), bigger TCP/UDP buffers, TCP Fast Open, MSS clamp for 4G/5G, conntrack timeouts, the performance CPU governor and data-plane priority. Turning it off restores the server to its exact previous state.</p>' +
+        '<div class="btn-row" id="tune-actions"></div></div>' +
+      '<div class="card pad-lg" id="tg-card"><div class="card-head"><h3>✈️ Telegram Proxy</h3>' +
+        '<span class="badge ' + (tg.active ? "on" : "neutral") + '" id="tg-badge">' + (tg.active ? "Active" : "Off") + "</span></div>" +
+        '<p class="hint">Build a Telegram <b>MTProto</b> proxy (mtg, FakeTLS-camouflaged) on this server with one tap — great for users on networks that throttle Telegram. Runs on a dedicated port so it never clashes with your proxy inbounds.</p>' +
+        '<div class="btn-row" id="tg-actions"></div><div id="tg-links">' + tgLinks(tg) + "</div></div>" +
+      "</div>";
+
     function renderTune() {
       $("#tune-badge", page).className = "badge " + (tune.active ? "on" : "neutral");
       $("#tune-badge", page).textContent = tune.active ? "Active" : "Off";
@@ -834,7 +851,27 @@
           try { await Z.post("/system/tuning/stop"); tune.active = false; toast("Tuning off — server restored"); renderTune(); }
           catch (ex) { toast(ex.message, "err"); } }); };
     }
+    function renderTg() {
+      $("#tg-badge", page).className = "badge " + (tg.active ? "on" : "neutral");
+      $("#tg-badge", page).textContent = tg.active ? "Active" : "Off";
+      $("#tg-actions", page).innerHTML = tg.active
+        ? '<button class="btn danger" id="tg-off">' + IC.power + " Turn off proxy</button>"
+        : '<button class="btn primary" id="tg-on">' + IC.bolt + " Build Telegram proxy</button>";
+      $("#tg-links", page).innerHTML = tgLinks(tg);
+      $("#tg-links", page).querySelectorAll("[data-copy]").forEach(function (b) { b.onclick = function () { copy(b.dataset.copy); }; });
+      var on = $("#tg-on", page), off = $("#tg-off", page);
+      if (on) on.onclick = function (e) { busy(e.currentTarget, async function () {
+        try { var r = await Z.post("/system/tgproxy/start"); if (r.ok === false) { toast(r.detail || "Failed", "err"); return; }
+          tg = Object.assign({ active: true }, r); toast("Telegram proxy is live"); renderTg();
+        } catch (ex) { toast(ex.message, "err"); } }); };
+      if (off) off.onclick = async function (e) {
+        if (!(await confirmModal({ title: "Turn off Telegram proxy", message: "Stop and remove the MTProto proxy? The current link stops working.", confirm: "Turn off" }))) return;
+        busy(e.currentTarget, async function () {
+          try { await Z.post("/system/tgproxy/stop"); tg = { active: false }; toast("Telegram proxy removed"); renderTg(); }
+          catch (ex) { toast(ex.message, "err"); } }); };
+    }
     renderTune();
+    renderTg();
   };
 
   // -------- Clients --------

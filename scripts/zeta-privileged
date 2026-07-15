@@ -86,11 +86,11 @@ case "$action" in
   systemctl)
     subaction="${1:-}"; unit="${2:-}"
     case "$subaction" in
-      restart|reload-or-restart|stop) ;;
+      restart|reload-or-restart|stop|enable|disable) ;;
       *) die "action not allowed: $subaction" ;;
     esac
     case "$unit" in
-      zeta-panel|zeta-xray|zeta-singbox|zeta-ws|nginx|ssh|dropbear|stunnel4) ;;
+      zeta-panel|zeta-xray|zeta-singbox|zeta-ws|zeta-mtproxy|zeta-bot|zeta-badvpn|nginx|ssh|dropbear|stunnel4) ;;
       *) die "unit not allowed: $unit" ;;
     esac
     exec systemctl "$subaction" "$unit"
@@ -102,6 +102,14 @@ case "$action" in
     sub="${1:-}"
     case "$sub" in apply|revert|reapply|status) ;; *) die "invalid tuning action: $sub" ;; esac
     exec /usr/local/sbin/zeta-tuning "$sub"
+    ;;
+
+  tgproxy)
+    # Telegram MTProto proxy — zeta-tgproxy builds/tears-down mtg itself; we only
+    # gate the verb (start downloads+builds, stop removes it, status reports).
+    sub="${1:-}"
+    case "$sub" in start|stop|status) ;; *) die "invalid tgproxy action: $sub" ;; esac
+    exec /usr/local/sbin/zeta-tgproxy "$sub"
     ;;
 
   ufw-allow)

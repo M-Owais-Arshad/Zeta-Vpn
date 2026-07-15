@@ -10,7 +10,7 @@ from ..config import settings
 from ..db import get_db
 from ..deps import require_admin
 from ..models import Client, Inbound, SSHAccount, User
-from ..core import protocols, services, system_stats, tuning
+from ..core import protocols, services, system_stats, tuning, tgproxy
 from ..schemas import ProtocolInfo
 
 router = APIRouter()
@@ -111,3 +111,22 @@ def tuning_start(_: User = Depends(require_admin)) -> dict:
 @router.post("/tuning/stop")
 def tuning_stop(_: User = Depends(require_admin)) -> dict:
     return tuning.stop()
+
+
+# --- Telegram (MTProto) proxy -------------------------------------------------
+# mtg build/teardown lives in the root-owned scripts/zeta-tgproxy.sh, reached
+# only through the zeta-privileged wrapper.
+
+@router.get("/tgproxy")
+def tgproxy_status(_: User = Depends(require_admin)) -> dict:
+    return tgproxy.status()
+
+
+@router.post("/tgproxy/start")
+def tgproxy_start(_: User = Depends(require_admin)) -> dict:
+    return tgproxy.start()
+
+
+@router.post("/tgproxy/stop")
+def tgproxy_stop(_: User = Depends(require_admin)) -> dict:
+    return tgproxy.stop()
