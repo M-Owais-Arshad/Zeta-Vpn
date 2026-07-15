@@ -56,6 +56,7 @@ def _accumulate_once() -> None:
         # connection minutes ago and never again (see access_log.py) —
         # used to keep genuinely-active clients from "going offline".
         active_emails = {email for email, rec in xray_stats["users"].items() if rec["up"] or rec["down"]}
+        active_emails |= {email for email, rec in singbox_stats["users"].items() if rec["up"] or rec["down"]}
         _update_ip_limits(db, active_emails)
 
         # Always enforce, even when this poll gathered zero fresh stats (a
@@ -78,6 +79,12 @@ def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001
     ``is_usable`` change the same way it already does for quota/expiry.
     """
     counts = access_log.poll_concurrent_ips(active_emails)
+    # Merge sing-box's per-user IP snapshot (Hysteria2/TUIC) — its clients are
+    # invisible to Xray's access log, so without this their limit_ip cap would
+    # be a silent no-op. singbox.client_activity() is the same read-only,
+    # window-filtered {email: [ip,...]} shape.
+    for email, ips in singbox.client_activity().items():
+        counts[email] = max(counts.get(email, 0), len(ips))
     for client in db.query(Client).filter(Client.limit_ip > 0).all():
         exceeded = counts.get(client.email, 0) > client.limit_ip
         if exceeded != client.ip_limit_exceeded:

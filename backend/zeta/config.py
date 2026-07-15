@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # --- Identity / branding -------------------------------------------------
     brand: str = "ZetaVPN"
-    version: str = "1.0.0"
+    version: str = "1.2.0"
 
     # --- Filesystem layout ---------------------------------------------------
     home: Path = ZETA_HOME
