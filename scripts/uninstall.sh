@@ -14,7 +14,7 @@ read -rp "Really uninstall ZetaVPN? [y/N] " a
 [ "${a,,}" = "y" ] || { echo "Aborted."; exit 0; }
 
 msg "Stopping and disabling services"
-for u in zeta-panel zeta-xray zeta-singbox zeta-ws; do
+for u in zeta-panel zeta-xray zeta-singbox zeta-ws zeta-badvpn zeta-mtproxy zeta-bot zeta-gaming-tune; do
   systemctl disable --now "$u" 2>/dev/null || true
   rm -f "/etc/systemd/system/${u}.service"
 done

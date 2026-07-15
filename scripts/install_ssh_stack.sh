@@ -99,4 +99,51 @@ systemctl restart stunnel4 || warn "stunnel4 failed to start"
 ok "stunnel (SSH-over-SSL) listening on ${STUNNEL_PORT}"
 
 msg "WebSocket SSH proxy will listen on ${WS_PORT} (unit: zeta-ws)"
+
+# ---- badvpn-udpgw: UDP over the SSH tunnel (gaming/voice) ----
+# Not packaged in apt, so built from source. Best-effort: if the build tools or
+# the build itself fail, the SSH stack still works — UDPGW is simply skipped and
+# the install never breaks over it. Binds loopback only (reachable ONLY through
+# an established SSH tunnel), so it adds no public attack surface.
+if ! [ -x /usr/local/bin/badvpn-udpgw ]; then
+  msg "Building badvpn-udpgw (UDP-over-SSH for gaming) — optional"
+  _had_cmake=1; command -v cmake >/dev/null 2>&1 || _had_cmake=0
+  if apt_install cmake gcc make git >/dev/null 2>&1; then
+    _bv=$(mktemp -d)
+    if git clone --depth 1 https://github.com/ambrop72/badvpn.git "$_bv/badvpn" >/dev/null 2>&1 \
+       && ( cd "$_bv/badvpn" && mkdir -p build && cd build \
+            && cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null 2>&1 \
+            && make >/dev/null 2>&1 ) \
+       && [ -x "$_bv/badvpn/build/udpgw/badvpn-udpgw" ]; then
+      install -m 0755 "$_bv/badvpn/build/udpgw/badvpn-udpgw" /usr/local/bin/badvpn-udpgw
+      ok "badvpn-udpgw installed"
+    else
+      warn "badvpn-udpgw build failed — SSH works, just no UDP/gaming gateway"
+    fi
+    rm -rf "$_bv"
+    [ "$_had_cmake" = 0 ] && { apt-get purge -y cmake >/dev/null 2>&1 || true; apt-get autoremove -y >/dev/null 2>&1 || true; }
+  else
+    warn "badvpn build deps unavailable — skipping UDPGW (SSH still works)"
+  fi
+fi
+if [ -x /usr/local/bin/badvpn-udpgw ]; then
+  cat > /etc/systemd/system/zeta-badvpn.service <<'UNIT'
+[Unit]
+Description=ZetaVPN BadVPN UDPGW (UDP over the SSH tunnel — gaming/voice)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/badvpn-udpgw --loglevel 0 --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 50
+Restart=always
+RestartSec=3
+MemoryHigh=64M
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable --now zeta-badvpn >/dev/null 2>&1 || warn "zeta-badvpn failed to start"
+  ok "badvpn UDPGW on 127.0.0.1:7300 (unit: zeta-badvpn)"
+fi
+
 ok "SSH stack ready"
