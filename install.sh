@@ -169,6 +169,7 @@ chmod 750 "$ZETA_HOME"
 # real privileged command. Must stay root-owned, not writable by zetavpn —
 # if 'zetavpn' could edit it, sudo access to run it would be full root.
 install -m 0755 -o root -g root "${ZETA_HOME}/scripts/zeta-privileged" /usr/local/sbin/zeta-privileged
+install -m 0755 -o root -g root "${ZETA_HOME}/scripts/zeta-tuning.sh" /usr/local/sbin/zeta-tuning
 
 command -v sudo >/dev/null 2>&1 || apt_install sudo
 cat > /etc/sudoers.d/zetavpn-panel <<'SUDOERS'

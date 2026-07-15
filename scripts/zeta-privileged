@@ -96,6 +96,14 @@ case "$action" in
     exec systemctl "$subaction" "$unit"
     ;;
 
+  tuning)
+    # Elite gaming tuning — zeta-tuning does its own snapshot/apply/exact-revert;
+    # we only gate which sub-action the unprivileged panel user may trigger.
+    sub="${1:-}"
+    case "$sub" in apply|revert|reapply|status) ;; *) die "invalid tuning action: $sub" ;; esac
+    exec /usr/local/sbin/zeta-tuning "$sub"
+    ;;
+
   ufw-allow)
     # zeta-privileged ufw-allow <port> <tcp|udp>
     # Opens the firewall for a client-facing proxy port the admin picked in

@@ -806,6 +806,37 @@
     return { port: out[0], extra: out.slice(1) };
   }
 
+  // -------- Boost (elite gaming / low-latency network tuning) --------
+  VIEWS.tuning = async function (page, route, ep) {
+    setTitle("Boost", "Elite gaming / low-latency network tuning");
+    var tune = { active: false };
+    try { tune = await Z.get("/system/tuning"); } catch (e) { /* degrade if endpoint missing */ }
+    if (stale(ep)) return;
+    page.innerHTML =
+      '<div class="card pad-lg" id="tune-card"><div class="card-head"><h3>⚡ Elite Gaming Tuning</h3>' +
+        '<span class="badge ' + (tune.active ? "on" : "neutral") + '" id="tune-badge">' + (tune.active ? "Active" : "Off") + "</span></div>" +
+        '<p class="hint">One-tap low-latency tuning for mobile gamers: BBR + fair queueing (kills bufferbloat), bigger TCP/UDP buffers, TCP Fast Open, MSS clamp for 4G/5G, deeper NIC queues, the performance CPU governor and data-plane priority. Turning it off restores the server to its exact previous state.</p>' +
+        '<div class="btn-row" id="tune-actions"></div></div>';
+    function renderTune() {
+      $("#tune-badge", page).className = "badge " + (tune.active ? "on" : "neutral");
+      $("#tune-badge", page).textContent = tune.active ? "Active" : "Off";
+      $("#tune-actions", page).innerHTML = tune.active
+        ? '<button class="btn danger" id="tune-off">' + IC.power + " Turn off tuning</button>"
+        : '<button class="btn primary" id="tune-on">' + IC.bolt + " Start elite tuning</button>";
+      var on = $("#tune-on", page), off = $("#tune-off", page);
+      if (on) on.onclick = function (e) { busy(e.currentTarget, async function () {
+        try { var r = await Z.post("/system/tuning/start"); tune.active = r.active !== false;
+          r.ok === false ? toast(r.detail || "Failed", "err") : toast("Elite tuning is ON — server boosted"); renderTune();
+        } catch (ex) { toast(ex.message, "err"); } }); };
+      if (off) off.onclick = async function (e) {
+        if (!(await confirmModal({ title: "Turn off tuning", message: "Revert all gaming tuning and return the server to its exact previous state?", confirm: "Turn off" }))) return;
+        busy(e.currentTarget, async function () {
+          try { await Z.post("/system/tuning/stop"); tune.active = false; toast("Tuning off — server restored"); renderTune(); }
+          catch (ex) { toast(ex.message, "err"); } }); };
+    }
+    renderTune();
+  };
+
   // -------- Clients --------
   function clientRow(c, ib, showInbound) {
     var used = (c.up || 0) + (c.down || 0);

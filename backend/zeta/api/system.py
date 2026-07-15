@@ -10,7 +10,7 @@ from ..config import settings
 from ..db import get_db
 from ..deps import require_admin
 from ..models import Client, Inbound, SSHAccount, User
-from ..core import protocols, services, system_stats
+from ..core import protocols, services, system_stats, tuning
 from ..schemas import ProtocolInfo
 
 router = APIRouter()
@@ -92,3 +92,22 @@ def restart_service(unit: str, _: User = Depends(require_admin)) -> dict:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Service not managed by ZetaVPN")
     res = services.restart(unit)
     return {"ok": res.ok, "detail": (res.stderr or res.stdout).strip()}
+
+
+# --- Elite gaming / low-latency tuning ---------------------------------------
+# All the real work (snapshot, apply, exact revert) lives in the root-owned
+# scripts/zeta-tuning.sh, reached only through the zeta-privileged wrapper.
+
+@router.get("/tuning")
+def tuning_status(_: User = Depends(require_admin)) -> dict:
+    return tuning.status()
+
+
+@router.post("/tuning/start")
+def tuning_start(_: User = Depends(require_admin)) -> dict:
+    return tuning.start()
+
+
+@router.post("/tuning/stop")
+def tuning_stop(_: User = Depends(require_admin)) -> dict:
+    return tuning.stop()
