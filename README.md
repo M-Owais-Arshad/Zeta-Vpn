@@ -42,10 +42,34 @@ together by a FastAPI backend and installed straight from GitHub.
 
 ---
 
-## 🚀 Setup guide — from zero to running
+## ⚡ Quick setup (for professionals)
 
-> **New to Linux/VPS? Follow every step below — each command is copy-paste ready and explained.**
-> Already comfortable? The one-liner in **Step 3** is all you need.
+On a fresh **Debian 11/12** or **Ubuntu 20.04 / 22.04 / 24.04** VPS, as **root**:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
+```
+
+With a domain (recommended — unlocks HTTPS + the TLS protocols), fully non-interactive:
+
+```bash
+ZETA_DOMAIN=vpn.example.com ZETA_YES=1 bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
+```
+
+Or clone and run from a local checkout:
+
+```bash
+git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git && cd Zeta-Vpn && sudo ./install.sh
+```
+
+The installer prints your **Panel URL, username and password** at the end (`zeta info` shows them again anytime). It also honours `ZETA_ADMIN_USERNAME`, `ZETA_ADMIN_PASSWORD`, `PANEL_PORT` and `ZETA_REPO` for forks — see [docs/INSTALL.md](docs/INSTALL.md) for the full list.
+
+---
+
+## 🐣 Beginner setup guide — step by step
+
+> **New to Linux or VPS servers? This section walks you through everything** — every command is copy-paste ready and explained in plain English.
+> *(If you followed the Quick setup above, you're already done — skip ahead to the **Using it** section below.)*
 
 ### What you need first
 
