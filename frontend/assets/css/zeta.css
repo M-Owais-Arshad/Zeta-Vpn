@@ -152,8 +152,10 @@ button { font-family: inherit; cursor: pointer; }
 .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
 .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
-/* Swap line under the RAM figure in the Memory stat card */
-.stat .swap-line { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); opacity: 0.85; }
+/* Swap line under the Memory card's progress bar (kept last so the bar stays
+   aligned with the other stat cards) */
+.stat .swap-line { font-size: 12px; color: var(--muted); opacity: 0.85; }
+.stat .swap-line:empty { display: none; }
 .card {
   background: linear-gradient(170deg, rgba(255, 244, 246, 0.05), rgba(255, 244, 246, 0.02));
   border: 1px solid var(--border);

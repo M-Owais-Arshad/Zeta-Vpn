@@ -343,7 +343,7 @@
     page.innerHTML =
       '<div class="grid cols-4" id="stat-grid">' +
         statCard("cpu", "CPU", "", "", null) +
-        statCard("mem", "Memory", "", "", null) +
+        statCard("mem", "Memory", "", "", null, '<span class="swap-line" id="ss-swap"></span>') +
         statCard("disk", "Disk", "", "", null) +
         statCard("up", "Uptime", "", "", undefined) +
       "</div>" +
@@ -392,14 +392,14 @@
     function updateStats(st) {
       var cpu = Math.round(st.cpu_percent);
       setStat("cpu", cpu + "%", st.cpu_count + " cores · load " + st.load_avg.join(" / "), cpu);
-      setStat("mem", st.mem.percent + "%", "", st.mem.percent);
-      var ram = fmtBytes(st.mem.used) + " / " + fmtBytes(st.mem.total);
+      // RAM in the normal sub (so the bar lines up with the other cards),
+      // Swap on its own line UNDER the progress bar.
+      setStat("mem", st.mem.percent + "%", fmtBytes(st.mem.used) + " / " + fmtBytes(st.mem.total), st.mem.percent);
       var sw = st.swap || {};
-      var swLine = sw.total
+      var ssSwap = $("#ss-swap");
+      if (ssSwap) ssSwap.textContent = sw.total
         ? "Swap: " + fmtBytes(sw.used) + " / " + fmtBytes(sw.total) + " · " + sw.percent + "%"
         : "Swap: none";
-      var ssMem = $("#ss-mem");
-      if (ssMem) ssMem.innerHTML = esc(ram) + '<span class="swap-line">' + esc(swLine) + "</span>";
       setStat("disk", st.disk.percent + "%", fmtBytes(st.disk.used) + " / " + fmtBytes(st.disk.total), st.disk.percent);
       setStat("up", fmtUptime(st.uptime_seconds), st.brand + " v" + st.version, undefined);
       $("#ct-inb").textContent = st.counts.active_inbounds + " / " + st.counts.inbounds;
@@ -447,11 +447,12 @@
     });
   };
 
-  function statCard(key, label, value, sub, pct) {
+  function statCard(key, label, value, sub, pct, extra) {
     return '<div class="card stat"><span class="label">' + esc(label) + "</span>" +
       '<span class="value" id="sv-' + key + '">' + value + "</span>" +
       '<span class="muted sub" id="ss-' + key + '">' + esc(sub) + "</span>" +
       (pct !== undefined ? '<div class="progress" id="sp-' + key + '"><span style="width:0%"></span></div>' : "") +
+      (extra || "") +   // optional line AFTER the progress bar (e.g. Swap under Memory)
       "</div>";
   }
   function miniCard(label, valueHtml) {
