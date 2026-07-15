@@ -42,32 +42,167 @@ together by a FastAPI backend and installed straight from GitHub.
 
 ---
 
-## 🚀 Quick install
+## 🚀 Setup guide — from zero to running
 
-On a fresh **Debian 11/12** or **Ubuntu 20.04/22.04/24.04** VPS, as **root**:
+> **New to Linux/VPS? Follow every step below — each command is copy-paste ready and explained.**
+> Already comfortable? The one-liner in **Step 3** is all you need.
+
+### What you need first
+
+- A **VPS** (a rented Linux server) running a **fresh Debian 11/12** or **Ubuntu 20.04 / 22.04 / 24.04**, with at least **512 MB RAM**. Any provider works — DigitalOcean, Vultr, Hetzner, Linode, AWS Lightsail, etc.
+- The server's **public IP address** and its **root password** (your provider shows these when you create it).
+- *(Optional but recommended)* a **domain name** (e.g. `vpn.example.com`) with its **A record pointed to your server's IP**. A domain unlocks HTTPS + the TLS protocols (REALITY, Trojan, Hysteria2, TUIC).
+
+---
+
+### Step 1 — Connect to your server
+
+From **your own computer's** terminal (Windows: PowerShell or Windows Terminal · macOS/Linux: Terminal), open an SSH connection. Replace `YOUR_SERVER_IP` with your server's IP:
+
+```bash
+ssh root@YOUR_SERVER_IP
+```
+
+The first time it asks *"Are you sure you want to continue connecting?"* — type `yes` and press Enter, then type your root password (the screen stays blank while typing — that's normal).
+
+---
+
+### Step 2 — Update the server (recommended)
+
+Refresh the package list and install the latest security updates before you begin:
+
+```bash
+apt update && apt upgrade -y
+```
+
+---
+
+### Step 3 — Install ZetaVPN (one command)
+
+This downloads and runs the installer. It sets up Xray, sing-box, the SSH stack, nginx, the web panel, a firewall and BBR — automatically. It takes about **2–5 minutes**; answer the confirmation prompt with `y`:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
 ```
 
-…or clone and run locally:
+**Have a domain? Use this instead** (point the domain's A record to your IP first). It also gets a free Let's Encrypt HTTPS certificate. Replace `vpn.example.com` with your domain:
 
 ```bash
-git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git
-cd zetavpn
-sudo ./install.sh
+ZETA_DOMAIN=vpn.example.com ZETA_YES=1 bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
 ```
 
-With a domain (recommended — unlocks TLS protocols + HTTPS panel):
+> Prefer to inspect the code first? Clone and run it locally instead:
+> ```bash
+> git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git
+> ```
+> ```bash
+> cd Zeta-Vpn && sudo ./install.sh
+> ```
+
+---
+
+### Step 4 — Save your login details
+
+When the installer finishes it prints a box with your **Panel URL**, **Username** and **Password**. **Copy all three somewhere safe** — the URL contains a secret path you cannot guess back.
+
+Lost them, or want to see them again later? Run:
 
 ```bash
-sudo ZETA_DOMAIN=vpn.example.com ./install.sh --yes
+zeta info
 ```
 
-When it finishes you'll get the **panel URL, username and password**. Open the URL, sign in, set your
-domain under **Settings**, then add an inbound and a client.
+---
 
-> The installer also honours `ZETA_REPO=…` if you're installing from a fork.
+### Step 5 — Open the panel and secure it
+
+Open the **Panel URL** in your browser and sign in. Then go straight to **Settings → Security** and:
+
+1. Set a strong password → **Update password**.
+2. Turn on two-factor auth → **Set up 2FA** → scan the QR with Google Authenticator / Aegis → enter the 6-digit code → **Enable**.
+
+If you used a domain, also set it under **Settings → Server identity → Server domain** so share links use your domain instead of the raw IP.
+
+---
+
+### Step 6 — Create your first inbound (a protocol)
+
+Go to **Inbounds → Add inbound**. Beginners: pick **VLESS + REALITY** (best for strict networks — needs a domain) or **VMess / WebSocket** (simplest to start). Keep the suggested port or set your own, then **Save**.
+
+---
+
+### Step 7 — Create a user (client)
+
+Open the inbound you just made → **Add client** → give it a name, and optionally a **data limit** and **expiry date** → **Save**.
+
+---
+
+### Step 8 — Connect a device
+
+Click the client's **Share** button. You get a config link, a **QR code**, and a **subscription URL**:
+
+- **Phone (Android):** install **Hiddify** or **NekoBox**, then scan the QR or paste the subscription URL.
+- **Windows:** install **v2rayN**, then import the subscription URL.
+- **iPhone:** install **Streisand** or **Shadowrocket**, then add the subscription URL.
+
+That's it — you're connected. 🎉
+
+---
+
+### Everyday management commands
+
+Open the interactive menu:
+
+```bash
+zeta
+```
+
+Check that every service is healthy:
+
+```bash
+zeta status
+```
+
+Show the panel URL + login details again:
+
+```bash
+zeta info
+```
+
+Restart everything (panel + cores + nginx):
+
+```bash
+zeta restart all
+```
+
+Save a backup (database + config) to `/root`:
+
+```bash
+zeta backup
+```
+
+Update to the latest version and restart:
+
+```bash
+zeta update
+```
+
+---
+
+### If the panel won't open
+
+First, re-check the services:
+
+```bash
+zeta status
+```
+
+Look at the panel's recent logs for errors:
+
+```bash
+journalctl -u zeta-panel -n 50 --no-pager
+```
+
+Still stuck? Make sure your **VPS provider's firewall / security group** allows inbound ports **80** and **443** (panel + HTTPS) and **22** (SSH) — a blocked cloud firewall is the most common cause.
 
 ---
 
