@@ -8,53 +8,91 @@
 #   zeta-tuning status    — print "active" or "inactive"
 #   zeta-tuning reapply    — re-apply the live (non-sysctl) bits on boot
 #
-# Design: everything that gets changed is first snapshotted under $SNAP so
-# `revert` puts the box back exactly how it was. sysctls also persist via a
-# drop-in; the non-sysctl bits (qdisc, MSS, txqueuelen) are re-applied on boot
-# by a tiny oneshot unit. Nothing here opens a port or touches ufw/fail2ban.
+# Design goals:
+#   • Everything changed is snapshotted first, so `revert` puts the box back
+#     EXACTLY as it was — sysctls, qdisc, txqueuelen, mangle rules, CPU
+#     governor, and the systemd cgroup weights (incl. the live /run overrides).
+#   • Fully graceful: a sysctl/knob the running kernel doesn't have is silently
+#     skipped, never written, never errored. Nothing here can crash the box or
+#     break connectivity — every step is best-effort ( || true ) and reversible.
+#   • Never opens a port / touches ufw / fail2ban / DNS.
 set -uo pipefail
 
 SNAP=/var/backups/zeta-tune
-SYSCTL_D=/etc/sysctl.d/99-zeta-gaming.conf
+# Loads LAST among /etc/sysctl.d (so it wins over any hand-written 99-zeta*.conf)
+SYSCTL_D=/etc/sysctl.d/99-zzz-zeta-gaming.conf
+SYSCTL_D_OLD=/etc/sysctl.d/99-zeta-gaming.conf   # pre-rename name, cleaned on revert
 BOOT_UNIT=/etc/systemd/system/zeta-gaming-tune.service
 STATE="$SNAP/state"
 
 iface() { ip route get 1.1.1.1 2>/dev/null | grep -Po 'dev \K\S+' | head -1; }
 
-# Keys we set with sysctl -w and persist. Snapshot reads their originals.
-SYSCTL_KEYS=(
-  net.ipv4.tcp_congestion_control net.core.default_qdisc
-  net.core.rmem_max net.core.wmem_max net.core.rmem_default net.core.wmem_default
-  net.ipv4.tcp_rmem net.ipv4.tcp_wmem
-  net.ipv4.udp_rmem_min net.ipv4.udp_wmem_min net.ipv4.udp_mem
-  net.core.netdev_max_backlog net.core.somaxconn net.ipv4.tcp_max_syn_backlog
-  net.ipv4.tcp_fastopen net.ipv4.tcp_notsent_lowat net.ipv4.tcp_mtu_probing
-  net.ipv4.tcp_slow_start_after_idle net.ipv4.icmp_ratelimit
-  net.ipv4.ip_local_port_range net.ipv4.tcp_tw_reuse net.ipv4.tcp_fin_timeout
+# The complete "beast" tuning set. Values chosen for a small (512MB–1GB) VPS
+# running Xray/sing-box userspace proxies: high BUFFER CEILINGS apps opt into,
+# but modest per-socket DEFAULTS so thousands of flows don't waste RAM; BBR+fq
+# pacing; TFO; conntrack timeouts that stop the table filling under churn;
+# swappiness low to keep the data plane resident (never 0 — keep an OOM valve).
+TUNING_SYSCTLS=(
+  "net.ipv4.tcp_congestion_control = bbr"
+  "net.core.default_qdisc = fq"
+  "net.core.rmem_max = 67108864"
+  "net.core.wmem_max = 67108864"
+  "net.core.rmem_default = 262144"
+  "net.core.wmem_default = 262144"
+  "net.ipv4.tcp_rmem = 4096 262144 67108864"
+  "net.ipv4.tcp_wmem = 4096 262144 67108864"
+  "net.ipv4.udp_rmem_min = 262144"
+  "net.ipv4.udp_wmem_min = 262144"
+  "net.core.netdev_max_backlog = 16384"
+  "net.core.somaxconn = 8192"
+  "net.ipv4.tcp_max_syn_backlog = 8192"
+  "net.ipv4.tcp_fastopen = 3"
+  "net.ipv4.tcp_notsent_lowat = 16384"
+  "net.ipv4.tcp_mtu_probing = 1"
+  "net.ipv4.tcp_slow_start_after_idle = 0"
+  "net.ipv4.tcp_no_metrics_save = 1"
+  "net.ipv4.icmp_ratelimit = 0"
+  "net.ipv4.tcp_tw_reuse = 1"
+  "net.ipv4.tcp_fin_timeout = 15"
+  "vm.swappiness = 10"
+  "net.netfilter.nf_conntrack_tcp_timeout_established = 7200"
+  "net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30"
+  "net.netfilter.nf_conntrack_tcp_timeout_close_wait = 30"
 )
+
+# Snapshot keys are DERIVED from the set above, so every key we ever set is also
+# recorded — no "set-without-snapshot" revert gaps, ever.
+SYSCTL_KEYS=()
+for _kv in "${TUNING_SYSCTLS[@]}"; do SYSCTL_KEYS+=("${_kv%% *}"); done
+
+# Best-effort load of the modules whose sysctls we tune (nf_conntrack exposes
+# the timeout keys; tcp_bbr the congestion control). Missing = harmless skip.
+load_modules() {
+  modprobe nf_conntrack 2>/dev/null || true
+  modprobe tcp_bbr 2>/dev/null || true
+}
 
 snapshot() {
   mkdir -p "$SNAP/dropins"
+  load_modules   # so conntrack keys exist and their originals get recorded
   local IF; IF=$(iface); echo "${IF:-eth0}" > "$SNAP/iface.orig"
   # sysctl originals as "key = value" lines so revert is `sysctl -p`.
   : > "$SNAP/sysctl.orig"
   local k v
   for k in "${SYSCTL_KEYS[@]}"; do
-    v=$(sysctl -n "$k" 2>/dev/null) || continue
+    v=$(sysctl -n "$k" 2>/dev/null) || continue   # key absent -> skip gracefully
     printf '%s = %s\n' "$k" "$v" >> "$SNAP/sysctl.orig"
   done
   [ -n "$IF" ] && {
     tc qdisc show dev "$IF" root 2>/dev/null > "$SNAP/qdisc.orig" || true
     cat "/sys/class/net/$IF/tx_queue_len" 2>/dev/null > "$SNAP/txqlen.orig" || true
-    ethtool -a "$IF" 2>/dev/null > "$SNAP/pause.orig" || true
   }
   iptables-save -t mangle 2>/dev/null > "$SNAP/mangle.orig" || true
-  { local i=0 g
+  { local g
     for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-      [ -r "$g" ] && echo "$(cat "$g")"; i=$((i+1))
+      [ -r "$g" ] && echo "$(cat "$g")"
     done
   } > "$SNAP/governor.orig" 2>/dev/null || true
-  # existing drop-ins for units we touch
   local svc
   for svc in zeta-panel zeta-xray zeta-singbox zeta-ws; do
     [ -d "/etc/systemd/system/${svc}.service.d" ] && \
@@ -62,49 +100,33 @@ snapshot() {
   done
 }
 
+# Build the persisted sysctl drop-in from ONLY the keys the running kernel
+# actually has — an unsupported knob is skipped, so `sysctl -p` never errors and
+# boot never warns. (Fully graceful: apply-if-possible, else skip.)
 write_sysctl_d() {
-  cat > "$SYSCTL_D" <<'CONF'
-# ZetaVPN elite gaming tuning (managed — removed by `zeta-tuning revert`)
-net.ipv4.tcp_congestion_control = bbr
-net.core.default_qdisc = fq
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.core.rmem_default = 262144
-net.core.wmem_default = 262144
-net.ipv4.tcp_rmem = 4096 131072 16777216
-net.ipv4.tcp_wmem = 4096 16384 16777216
-net.ipv4.udp_rmem_min = 16384
-net.ipv4.udp_wmem_min = 16384
-net.core.netdev_max_backlog = 16384
-net.core.somaxconn = 8192
-net.ipv4.tcp_max_syn_backlog = 8192
-net.ipv4.tcp_fastopen = 3
-net.ipv4.tcp_notsent_lowat = 16384
-net.ipv4.tcp_mtu_probing = 1
-net.ipv4.tcp_slow_start_after_idle = 0
-net.ipv4.icmp_ratelimit = 0
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_fin_timeout = 15
-CONF
+  {
+    echo "# ZetaVPN elite gaming tuning (managed — removed by 'zeta-tuning revert')"
+    local kv key
+    for kv in "${TUNING_SYSCTLS[@]}"; do
+      key="${kv%% *}"
+      sysctl -n "$key" >/dev/null 2>&1 && echo "$kv"
+    done
+  } > "$SYSCTL_D"
 }
 
-# The live, non-sysctl bits (safe to run every boot; idempotent).
+# The live, non-sysctl bits (safe to run every boot; idempotent, all best-effort).
 apply_live() {
   local IF; IF=$(iface); [ -z "$IF" ] && IF=$(cat "$SNAP/iface.orig" 2>/dev/null)
-  modprobe tcp_bbr 2>/dev/null || true
-  # sysctls (immediate)
+  load_modules
   sysctl -p "$SYSCTL_D" >/dev/null 2>&1 || true
-  # qdisc: fq (BBR's pacing engine)
   [ -n "$IF" ] && tc qdisc replace dev "$IF" root fq 2>/dev/null || true
-  # MSS clamp for 4G/5G + tunnel headroom (idempotent: delete-then-add)
   if [ -n "$IF" ]; then
-    iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
-    iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
-    iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IF" -j TCPMSS --set-mss 1360 2>/dev/null || true
-    iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IF" -j TCPMSS --set-mss 1360 2>/dev/null || true
+    # Terminating userspace proxy re-originates connections, so we only clamp the
+    # server->origin leg, and to the REAL path MTU (adaptive, not a fixed guess).
+    # No FORWARD rule — nothing is kernel-forwarded here, so it could never match.
+    iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IF" -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IF" -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
     ip link set dev "$IF" txqueuelen 2000 2>/dev/null || true
-    # (ethtool -A pause frames intentionally NOT applied: they can't be exactly
-    #  reverted on all NICs, and the whole feature promises a clean turn-off.)
   fi
   # CPU governor = performance (no-op on KVM guests with no cpufreq)
   local g
@@ -114,19 +136,22 @@ apply_live() {
 }
 
 write_prio_dropins() {
-  local d
-  # data plane: priority
+  local d svc
+  # data plane: priority + a high fd ceiling (each proxied flow uses fds on both
+  # the inbound and re-originated outbound side; the default 1024/4096 refuses
+  # connections under load). LimitNOFILE only bites after the daemon restarts.
   for svc in zeta-xray zeta-singbox zeta-badvpn; do
     d="/etc/systemd/system/${svc}.service.d"; mkdir -p "$d"
-    printf '[Service]\nNice=-5\nCPUWeight=300\nIOWeight=200\n' > "$d/20-zeta-prio.conf"
+    printf '[Service]\nNice=-5\nCPUWeight=300\nIOWeight=200\nLimitNOFILE=1048576\n' > "$d/20-zeta-prio.conf"
   done
   # control plane: deprioritize the panel so it never steals CPU from forwarding
   d="/etc/systemd/system/zeta-panel.service.d"; mkdir -p "$d"
   printf '[Service]\nNice=10\nCPUWeight=50\nIOWeight=50\n' > "$d/20-zeta-deprio.conf"
   systemctl daemon-reload 2>/dev/null || true
-  # Apply the cgroup weights to the ALREADY-RUNNING units immediately (a
-  # drop-in + daemon-reload only affects the next start; --runtime set-property
-  # takes effect live without dropping any connections).
+  # Apply the cgroup weights to the ALREADY-RUNNING units immediately (a drop-in
+  # + daemon-reload only affects the next start; --runtime set-property takes
+  # effect live without dropping connections). These land in /run and are undone
+  # by remove_prio_dropins() on revert.
   for svc in zeta-xray zeta-singbox zeta-badvpn; do
     systemctl set-property --runtime "$svc" CPUWeight=300 IOWeight=200 2>/dev/null || true
   done
@@ -138,6 +163,13 @@ remove_prio_dropins() {
         /etc/systemd/system/zeta-singbox.service.d/20-zeta-prio.conf \
         /etc/systemd/system/zeta-badvpn.service.d/20-zeta-prio.conf \
         /etc/systemd/system/zeta-panel.service.d/20-zeta-deprio.conf 2>/dev/null || true
+  # The LIVE weights set via `systemctl set-property --runtime` live in /run and
+  # OUTRANK the /etc drop-ins — without removing them, revert would leave xray/
+  # sing-box boosted and the panel throttled until the next reboot.
+  rm -rf /run/systemd/system.control/zeta-xray.service.d \
+         /run/systemd/system.control/zeta-singbox.service.d \
+         /run/systemd/system.control/zeta-badvpn.service.d \
+         /run/systemd/system.control/zeta-panel.service.d 2>/dev/null || true
   local svc
   for svc in zeta-xray zeta-singbox zeta-badvpn zeta-panel; do
     rmdir --ignore-fail-on-non-empty "/etc/systemd/system/${svc}.service.d" 2>/dev/null || true
@@ -166,6 +198,7 @@ UNIT
 
 cmd_apply() {
   mkdir -p "$SNAP"
+  load_modules
   [ -f "$STATE" ] && { apply_live; echo "already active (re-applied)"; exit 0; }
   snapshot
   write_sysctl_d
@@ -179,17 +212,20 @@ cmd_apply() {
 cmd_revert() {
   [ -f "$STATE" ] || { echo "not active"; exit 0; }
   local IF; IF=$(cat "$SNAP/iface.orig" 2>/dev/null); [ -z "$IF" ] && IF=$(iface)
-  # sysctls back to snapshot
+  # sysctls back to snapshot, then drop our files (both current + pre-rename name)
   [ -f "$SNAP/sysctl.orig" ] && sysctl -p "$SNAP/sysctl.orig" >/dev/null 2>&1 || true
-  rm -f "$SYSCTL_D"
-  # qdisc back to original kind (default fq_codel if unknown)
+  rm -f "$SYSCTL_D" "$SYSCTL_D_OLD"
   if [ -n "$IF" ]; then
-    local kind; kind=$(awk '{print $2}' "$SNAP/qdisc.orig" 2>/dev/null); [ -z "$kind" ] && kind=fq_codel
+    # qdisc back to the original kind (first line only — multi-queue NICs print
+    # several); default fq_codel if unknown.
+    local kind; kind=$(awk 'NR==1{print $2}' "$SNAP/qdisc.orig" 2>/dev/null); [ -z "$kind" ] && kind=fq_codel
     tc qdisc replace dev "$IF" root "$kind" 2>/dev/null || tc qdisc del dev "$IF" root 2>/dev/null || true
-    # txqueuelen
     local txq; txq=$(cat "$SNAP/txqlen.orig" 2>/dev/null); [ -n "$txq" ] && ip link set dev "$IF" txqueuelen "$txq" 2>/dev/null || true
+    # Remove exactly the MSS rule we add (belt-and-suspenders if mangle.orig was
+    # empty at snapshot), so a blanket restore isn't the only safety net.
+    while iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IF" -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; do :; done
   fi
-  # exact mangle-table restore (removes the MSS clamp rules atomically)
+  # exact mangle-table restore
   [ -f "$SNAP/mangle.orig" ] && iptables-restore -T mangle < "$SNAP/mangle.orig" 2>/dev/null || true
   # CPU governor back
   if [ -f "$SNAP/governor.orig" ]; then
