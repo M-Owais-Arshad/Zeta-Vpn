@@ -81,23 +81,59 @@ def _flush_or_409(db: Session, port: int, tag: str, fronted: bool, ws_path: str 
         raise HTTPException(status.HTTP_409_CONFLICT, f"Port {port} already in use by another inbound")
 
 
-def _check_external_port_conflict(db: Session, port: int, protocol: str, exclude_id: int | None) -> None:
-    """Reject a direct (non-WS) inbound port that collides with nginx/ssh/etc.
-
-    Only meaningful for direct binds — WS-family inbounds always share :80
-    with nginx by design (that's not a conflict, see core/nginx.py).
-    """
-    family = protocols.l4_family(protocol)
-    q = db.query(Inbound.port, Inbound.protocol).filter(Inbound.internal_port.is_(None))
+def _panel_direct_ports(db: Session, exclude_id: int | None, family: str) -> set[int]:
+    """Every direct port the panel's OTHER inbounds already bind — each
+    inbound's own `port` (when it's a direct, non-fronted bind) plus all its
+    extra_ports — restricted to the same L4 (tcp/udp) family."""
+    q = db.query(Inbound.port, Inbound.protocol, Inbound.internal_port, Inbound.extra_ports)
     if exclude_id is not None:
         q = q.filter(Inbound.id != exclude_id)
-    own_ports = {p for p, proto in q.all() if protocols.l4_family(proto) == family}
-    if portcheck.external_conflict(port, family, own_ports):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Port {port}/{family} is already in use by another service on this server "
-            "(e.g. nginx on 80/443, or the SSH stack) — pick a different port.",
-        )
+    ports: set[int] = set()
+    for port, proto, internal, extras in q.all():
+        if protocols.l4_family(proto) != family:
+            continue
+        if internal is None:  # direct primary bind
+            ports.add(port)
+        ports.update(extras or [])
+    return ports
+
+
+def _validate_ports(
+    db: Session, primary_port: int, fronted: bool, protocol: str,
+    extra_ports: list[int] | None, exclude_id: int | None,
+) -> list[int]:
+    """Clean the extra_ports list and reject any direct-port collision — with
+    another inbound (primary or extra) or an external service (nginx/SSH/…).
+    Returns the de-duplicated extras. Also covers the primary when it's a
+    direct bind (fronted primaries live on nginx's shared :80/:443).
+    """
+    family = protocols.l4_family(protocol)
+    cleaned: list[int] = []
+    for p in (extra_ports or []):
+        if not (1 <= p <= 65535):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Extra port {p} is out of range (1-65535)")
+        if p in protocols.FRONTED_PORTS:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Port {p} is a shared nginx port — make it the MAIN port to use path-fronting; "
+                "extra ports are dedicated direct binds.",
+            )
+        if p == primary_port or p in cleaned:
+            continue
+        cleaned.append(p)
+    new_direct = cleaned + ([] if fronted else [primary_port])
+    owned = _panel_direct_ports(db, exclude_id, family)
+    for p in new_direct:
+        if p in owned:
+            raise HTTPException(status.HTTP_409_CONFLICT, f"Port {p} is already used by another inbound")
+    for p in new_direct:
+        if portcheck.external_conflict(p, family, owned | set(new_direct)):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Port {p}/{family} is already in use by another service on this server "
+                "(nginx, the SSH stack, etc.) — pick a different port.",
+            )
+    return cleaned
 
 
 def _seed_reality(stream: dict) -> dict:
@@ -188,8 +224,7 @@ def create_inbound(
                 "(stream_settings.<network>.path). Give it its own dedicated port instead "
                 "for a free or empty path.",
             )
-    if not fronted:
-        _check_external_port_conflict(db, port, body.protocol, exclude_id=None)
+    extra_ports = _validate_ports(db, port, fronted, body.protocol, body.extra_ports, exclude_id=None)
 
     port_key = protocols.compute_port_key(port, body.protocol, body.network, stream)
     if db.query(Inbound).filter(Inbound.port_key == port_key).first():
@@ -214,6 +249,7 @@ def create_inbound(
         stream_settings=stream,
         sniffing=body.sniffing,
         port_key=port_key,
+        extra_ports=extra_ports,
     )
     db.add(ib)
     _flush_or_409(db, port, body.tag, fronted, ws_path)
@@ -233,9 +269,11 @@ def create_inbound(
         if not res.ok:
             log.warning("nginx sync failed after creating inbound %s: %s", ib.id, res.stderr or res.stdout)
     else:
-        # Direct inbounds (incl. a direct WS inbound on its own custom port) own
-        # a real listening port the firewall must open.
+        # Direct primary (incl. a direct WS inbound on its own custom port).
         firewall.allow(ib.port, ib.protocol)
+    # Extra ports are always direct binds, regardless of the primary's mode.
+    for ep in ib.extra_ports or []:
+        firewall.allow(ep, ib.protocol)
     return _to_out(ib)
 
 
@@ -263,6 +301,7 @@ def update_inbound(
     data = body.model_dump(exclude_unset=True)
     old_port = ib.port
     old_fronted = protocols.is_fronted(ib.network, ib.port)
+    old_direct = set(ib.extra_ports or []) | (set() if old_fronted else {ib.port})
 
     if ib.protocol == "shadowsocks" and "settings" in data:
         method = data["settings"].get("method", ib.settings.get("method", ""))
@@ -288,8 +327,7 @@ def update_inbound(
             )
     if not fronted:
         ib.internal_port = None
-        if ib.port != old_port or old_fronted:
-            _check_external_port_conflict(db, ib.port, ib.protocol, exclude_id=ib.id)
+    ib.extra_ports = _validate_ports(db, ib.port, fronted, ib.protocol, ib.extra_ports, exclude_id=ib.id)
 
     new_port_key = protocols.compute_port_key(ib.port, ib.protocol, ib.network, ib.stream_settings)
     if new_port_key != ib.port_key:
@@ -316,13 +354,13 @@ def update_inbound(
     # firewall must open/close.
     if old_fronted or fronted:
         nginx.sync(db)
-    if not fronted and old_fronted:
-        firewall.allow(ib.port, ib.protocol)            # became a direct port
-    elif not fronted and ib.port != old_port:
-        firewall.revoke(old_port, ib.protocol)          # moved direct port
-        firewall.allow(ib.port, ib.protocol)
-    elif fronted and not old_fronted:
-        firewall.revoke(old_port, ib.protocol)          # direct port -> fronted
+    # Reconcile the firewall to the exact set of direct ports this inbound now
+    # binds (primary-if-direct + extras), opening/closing only what changed.
+    new_direct = set(ib.extra_ports or []) | (set() if fronted else {ib.port})
+    for p in old_direct - new_direct:
+        firewall.revoke(p, ib.protocol)
+    for p in new_direct - old_direct:
+        firewall.allow(p, ib.protocol)
     return _to_out(ib)
 
 
@@ -351,17 +389,18 @@ def delete_inbound(
     if ib is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Inbound not found")
     core = ib.core
-    port, protocol = ib.port, ib.protocol
+    protocol = ib.protocol
     fronted = protocols.is_fronted(ib.network, ib.port)
+    # Every direct port this inbound bound (primary-if-direct + extras).
+    direct_ports = list(ib.extra_ports or []) + ([] if fronted else [ib.port])
     db.delete(ib)
     db.flush()
     _apply_or_422(db, core)
     db.commit()
     if fronted:
         nginx.sync(db)
-    else:
-        # Direct inbounds (incl. a direct WS on its own port) own a real port.
-        firewall.revoke(port, protocol)
+    for p in direct_ports:
+        firewall.revoke(p, protocol)
     return {"ok": True}
 
 

@@ -107,8 +107,10 @@ class Settings(BaseSettings):
     xray_access_log: Path = Path("/var/log/zetavpn/xray-access.log")
     # How long since last activity before a source IP is considered offline
     # (both for the "online" badge in the UI and the limit_ip check). Backed
-    # by real traffic, not just connection age — see access_log.py.
-    ip_limit_window_seconds: int = 120
+    # by real traffic, not just connection age — see access_log.py. Kept short
+    # (10s) so a client's IP frees up almost immediately after they drop off,
+    # instead of a stale/changed IP hogging the limit_ip slot for minutes.
+    ip_limit_window_seconds: int = 10
 
     @property
     def db_path(self) -> Path:

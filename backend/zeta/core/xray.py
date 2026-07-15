@@ -203,25 +203,36 @@ def build_inbound_settings(inbound: Inbound) -> dict:
     return base
 
 
-def build_inbound(inbound: Inbound) -> dict:
-    # WS-family inbounds are always nginx-fronted on the shared public port
-    # (core/nginx.py) — xray itself only ever binds the private loopback
-    # port nginx proxies to, never the public one (which nginx already owns).
+def build_inbounds(inbound: Inbound) -> list[dict]:
+    """One xray inbound per port this record listens on: the primary — a
+    127.0.0.1 loopback port when nginx-fronts a WS-family transport, else its
+    public port — plus one DIRECT listener per extra_port. All share the same
+    settings/clients/transport, so a single client works on every port.
+    """
+    settings = build_inbound_settings(inbound)
+    stream = build_stream_settings(inbound)
+    sniff = {"enabled": True, "destOverride": ["http", "tls", "quic"]} if inbound.sniffing else None
+
+    def _one(tag: str, listen: str, port: int) -> dict:
+        obj = {
+            "tag": tag,
+            "listen": listen,
+            "port": port,
+            "protocol": inbound.protocol,
+            "settings": settings,
+            "streamSettings": stream,
+        }
+        if sniff is not None:
+            obj["sniffing"] = sniff
+        return obj
+
     if protocols.is_ws_family(inbound.network) and inbound.internal_port:
-        listen, port = "127.0.0.1", inbound.internal_port
+        out = [_one(inbound.tag, "127.0.0.1", inbound.internal_port)]
     else:
-        listen, port = inbound.listen or "0.0.0.0", inbound.port
-    obj = {
-        "tag": inbound.tag,
-        "listen": listen,
-        "port": port,
-        "protocol": inbound.protocol,
-        "settings": build_inbound_settings(inbound),
-        "streamSettings": build_stream_settings(inbound),
-    }
-    if inbound.sniffing:
-        obj["sniffing"] = {"enabled": True, "destOverride": ["http", "tls", "quic"]}
-    return obj
+        out = [_one(inbound.tag, inbound.listen or "0.0.0.0", inbound.port)]
+    for p in (inbound.extra_ports or []):
+        out.append(_one(f"{inbound.tag}@{p}", inbound.listen or "0.0.0.0", p))
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -245,7 +256,7 @@ def generate_config(db: Session) -> dict:
         .order_by(Inbound.port.asc())
         .all()
     )
-    rendered = [build_inbound(ib) for ib in inbounds]
+    rendered = [x for ib in inbounds for x in build_inbounds(ib)]
     rendered.append(_api_inbound())
 
     return {

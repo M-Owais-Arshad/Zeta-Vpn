@@ -86,6 +86,19 @@ def build_inbound(inbound: Inbound) -> dict:
     return obj
 
 
+def build_inbounds(inbound: Inbound) -> list[dict]:
+    """The primary sing-box inbound plus one clone per extra_port (same users +
+    TLS on a different listen_port), so a client works on every listed port."""
+    primary = build_inbound(inbound)
+    out = [primary]
+    for p in (inbound.extra_ports or []):
+        clone = dict(primary)
+        clone["tag"] = f"{inbound.tag}@{p}"
+        clone["listen_port"] = p
+        out.append(clone)
+    return out
+
+
 def generate_config(db: Session) -> dict:
     inbounds = (
         db.query(Inbound)
@@ -95,7 +108,7 @@ def generate_config(db: Session) -> dict:
     )
     return {
         "log": {"level": "warn", "timestamp": True},
-        "inbounds": [build_inbound(ib) for ib in inbounds],
+        "inbounds": [x for ib in inbounds for x in build_inbounds(ib)],
         "outbounds": [
             {"type": "direct", "tag": "direct"},
             {"type": "block", "tag": "block"},

@@ -78,6 +78,9 @@ class InboundBase(BaseModel):
     settings: dict = Field(default_factory=dict)
     stream_settings: dict = Field(default_factory=dict)
     sniffing: bool = True
+    # Extra public ports this same inbound ALSO listens on (direct binds),
+    # sharing its clients/credentials. e.g. VLESS-WS on 80 + also on 8080/8443.
+    extra_ports: list[int] = Field(default_factory=list)
 
 
 class InboundCreate(InboundBase):
@@ -96,6 +99,7 @@ class InboundUpdate(BaseModel):
     settings: dict | None = None
     stream_settings: dict | None = None
     sniffing: bool | None = None
+    extra_ports: list[int] | None = None
 
 
 class InboundOut(BaseModel):
@@ -112,6 +116,7 @@ class InboundOut(BaseModel):
     # port; nginx proxies the public `port` to it (see core/nginx.py). None
     # for everything else, where xray binds `port` directly.
     internal_port: int | None = None
+    extra_ports: list[int] = Field(default_factory=list)
     network: str
     security: str
     settings: dict

@@ -54,6 +54,7 @@ def _ensure_columns() -> None:
 
     wanted = {
         "ssh_accounts": [("password", "VARCHAR(128)")],
+        "inbounds": [("extra_ports", "JSON DEFAULT '[]'")],
     }
     insp = inspect(engine)
     with engine.begin() as conn:

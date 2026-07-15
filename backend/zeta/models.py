@@ -112,6 +112,11 @@ class Inbound(Base):
     # (core/protocols.compute_port_key) and enforced unique here so a race
     # between two concurrent requests can't both win.
     port_key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    # Extra public ports this SAME inbound also listens on (direct xray binds),
+    # sharing its clients/credentials/transport. e.g. a VLESS-WS inbound on :80
+    # can also be reachable on 8080 and 8443. Empty for a single-port inbound;
+    # each extra is collision-checked like a direct port (see api/inbounds).
+    extra_ports: Mapped[list] = mapped_column(JSON, default=list)
 
     # Transport / stream. network = tcp|ws|grpc|httpupgrade|xhttp|kcp|quic (xray)
     network: Mapped[str] = mapped_column(String(24), default="tcp")

@@ -511,9 +511,10 @@
     try { list = await Z.get("/inbounds"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
     if (stale(ep)) return;
     var rows = list.map(function (ib) {
-      var portCell = ib.internal_port
+      var portCell = (ib.internal_port
         ? ib.port + ' <span class="mono">→ lo:' + ib.internal_port + "</span>"
-        : String(ib.port);
+        : String(ib.port))
+        + (ib.extra_ports && ib.extra_ports.length ? ' <span class="mono">+' + ib.extra_ports.join(",") + "</span>" : "");
       return "<tr>" +
         '<td><span class="badge ' + (ib.enabled ? "on" : "off") + '">' + (ib.enabled ? "Active" : "Off") + "</span></td>" +
         "<td><b>" + esc(ib.remark || ib.tag) + '</b><span class="sub mono">' + esc(ib.tag) + "</span></td>" +
@@ -611,7 +612,7 @@
     }
     var body = kv("Tag", ib.tag) +
       kv("Protocol / core", ib.protocol + " · " + ib.core) +
-      kv("Public port", String(ib.port)) +
+      kv("Public port(s)", [ib.port].concat(ib.extra_ports || []).join(", ")) +
       (ib.internal_port ? kv("Internal port (behind nginx)", "127.0.0.1:" + ib.internal_port) : "") +
       kv("Transport / security", ib.network + " / " + ib.security) +
       kv("Sniffing", ib.sniffing ? "on" : "off");
@@ -658,7 +659,7 @@
         '<div class="row">' +
         field("Tag (internal ID)", '<input id="f-tag" placeholder="auto-filled from the name" value="' + esc(existing ? existing.tag : "") + '"' + (isEdit ? " disabled" : "") + ">",
           isEdit ? "" : "Letters, numbers and dashes — filled in for you from the name.") +
-        '<div class="field"><label>Port</label><input id="f-port" type="number" placeholder="443"><p class="hint" id="f-port-hint"></p></div></div>' +
+        '<div class="field"><label>Port(s)</label><input id="f-port" type="text" inputmode="numeric" placeholder="443  (or 80, 8080, 8443)"><p class="hint" id="f-port-hint"></p></div></div>' +
         '<div class="row"><div class="field"><label>Transport</label><select id="f-net"></select></div>' +
         '<div class="field"><label>Security</label><select id="f-sec"></select></div></div>' +
         '<div id="f-dyn"></div>',
@@ -686,20 +687,17 @@
       var s = spec(), n = net.value;
       var isWs = s.ws_family_networks.indexOf(n) !== -1;
       port.disabled = false;
-      if (isWs) {
-        if (!portTouched) port.value = isEdit ? existing.port : 80;
-        portHint.textContent = "Port 80 or 443 → shared via nginx, routed by the path below (path required). Any other port (e.g. 8080) → its own dedicated listener, path optional.";
-      } else {
-        portHint.textContent = "";
-        if (!portTouched) port.value = (s.ports_by_network && s.ports_by_network[n]) || s.default_port;
-      }
+      if (!portTouched && !isEdit) port.value = isWs ? 80 : ((s.ports_by_network && s.ports_by_network[n]) || s.default_port);
+      portHint.textContent = isWs
+        ? "Main port 80/443 → shared via nginx, routed by the path (path required). Any other port (8080) → its own direct listener, path optional. Add MORE ports comma-separated (80, 8080, 8443) — same clients on all."
+        : "One port, or several comma-separated (443, 8443, 9000) — the inbound listens on each, same clients.";
     }
     function refresh() {
       var s = spec();
       fillSelect(net, s.transports, existing ? existing.network : s.default_transport);
       fillSelect(sec, s.securities, existing ? existing.security : s.default_security);
       if (!isEdit) portTouched = false;
-      if (isEdit && !existing.internal_port) port.value = existing.port;
+      if (isEdit) port.value = [existing.port].concat(existing.extra_ports || []).join(", ");
       refreshPort();
       renderDyn();
     }
@@ -770,17 +768,20 @@
               network: net.value, security: sec.value,
               stream_settings: ss,
             };
-            if (!port.disabled) patch.port = parseInt(port.value, 10);
+            var ppE = parsePorts(port.value);
+            if (ppE.port) { patch.port = ppE.port; patch.extra_ports = ppE.extra; }
             await Z.patch("/inbounds/" + existing.id, patch);
             mo.close();
             toast('Inbound "' + (patch.remark || existing.tag) + '" updated');
             reload();
           } else {
+            var ppC = parsePorts(port.value);
             var payload = {
               tag: tag.value.trim(),
               remark: remark.value.trim(),
               core: s.core, protocol: s.key,
-              port: parseInt(port.value, 10),
+              port: ppC.port,
+              extra_ports: ppC.extra,
               network: net.value, security: sec.value,
               settings: {}, stream_settings: ss, sniffing: true, auto_reality: true,
             };
@@ -796,6 +797,14 @@
     };
   }
   function val(sel, root) { var e = $(sel, root); return e ? e.value.trim() : ""; }
+  // "80, 8080 8443" -> { port: 80, extra: [8080, 8443] } (de-duped, in range).
+  function parsePorts(raw) {
+    var nums = String(raw || "").split(/[\s,]+/).map(function (x) { return parseInt(x, 10); })
+      .filter(function (n) { return n >= 1 && n <= 65535; });
+    var seen = {}, out = [];
+    nums.forEach(function (n) { if (!seen[n]) { seen[n] = 1; out.push(n); } });
+    return { port: out[0], extra: out.slice(1) };
+  }
 
   // -------- Clients --------
   function clientRow(c, ib, showInbound) {

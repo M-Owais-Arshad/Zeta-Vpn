@@ -100,3 +100,35 @@ def test_fronted_ws_same_path_conflicts(client, auth):
              stream_settings={"ws": {"path": "/shared-x"}})
     assert r1.status_code == 201, r1.text
     assert r2.status_code == 409, r2.text
+
+
+def test_extra_ports_stored(client, auth):
+    r = _mk(client, auth, tag="t-multi", protocol="vless", network="tcp",
+            port=28090, extra_ports=[28091, 28092])
+    assert r.status_code == 201, r.text
+    assert r.json()["extra_ports"] == [28091, 28092]
+
+
+def test_extra_port_collision_with_other_primary(client, auth):
+    r1 = _mk(client, auth, tag="t-mp-a", protocol="vless", network="tcp", port=28093)
+    r2 = _mk(client, auth, tag="t-mp-b", protocol="vless", network="tcp", port=28094,
+             extra_ports=[28093])  # 28093 is r1's primary port
+    assert r1.status_code == 201, r1.text
+    assert r2.status_code == 409, r2.text
+
+
+def test_extra_port_cannot_be_shared_nginx_port(client, auth):
+    r = _mk(client, auth, tag="t-mp-80", protocol="vless", network="tcp", port=28095,
+            extra_ports=[80])
+    assert r.status_code == 400, r.text
+
+
+def test_multi_port_emits_one_xray_listener_per_port(client, auth):
+    from zeta.core import xray
+    from zeta.models import Inbound
+    ib = Inbound(tag="mp", protocol="vless", listen="0.0.0.0", port=28096, network="tcp",
+                 security="none", internal_port=None, stream_settings={},
+                 settings={"decryption": "none"}, extra_ports=[28097, 28098])
+    outs = xray.build_inbounds(ib)
+    assert [o["port"] for o in outs] == [28096, 28097, 28098]
+    assert outs[1]["tag"] == "mp@28097"
