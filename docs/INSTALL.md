@@ -46,6 +46,8 @@ sudo ZETA_DOMAIN=vpn.example.com \
 | `ZETA_ADMIN_USERNAME` | `admin` | Initial admin username |
 | `ZETA_ADMIN_PASSWORD` | random | Initial admin password (generated + saved if unset) |
 | `XRAY_VERSION` / `SINGBOX_VERSION` | latest | Pin specific core versions |
+| `ZETA_MTPROXY_PORT` | `8443` | Public port for the Telegram MTProto proxy (Boost tab) |
+| `ZETA_MTPROXY_DOMAIN` | `www.cloudflare.com` | FakeTLS SNI the MTProto proxy masquerades as |
 
 These are written to `/opt/zetavpn/.env` (mode `0600`) on first run and reused afterward. Delete the
 file to regenerate credentials.

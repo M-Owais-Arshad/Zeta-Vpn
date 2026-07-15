@@ -39,15 +39,36 @@ class Limiter:
         self.total = 0
         self.per_ip: dict[str, int] = {}
 
-    def try_acquire(self, ip: str) -> bool:
-        if self.total >= self.max_total or self.per_ip.get(ip, 0) >= self.max_per_ip:
+    def acquire_slot(self) -> bool:
+        """Reserve a GLOBAL slot before the client IP is known.
+
+        The real client IP is only recoverable after the (up-to-10s) handshake
+        read, but a connection must be counted BEFORE that read — otherwise a
+        flood of clients that connect and never send bytes parks unbounded
+        pre-handshake sockets/coroutines, defeating the cap. Per-IP is charged
+        later, once the IP is parsed, via charge_ip().
+        """
+        if self.total >= self.max_total:
             return False
         self.total += 1
+        return True
+
+    def charge_ip(self, ip: str) -> bool:
+        """Attribute an already-reserved slot to `ip`, enforcing the per-IP cap.
+
+        Returns False if `ip` is already at the cap — the caller then rejects
+        and releases the global slot (passing ip=None, since nothing was
+        charged to this IP).
+        """
+        if self.per_ip.get(ip, 0) >= self.max_per_ip:
+            return False
         self.per_ip[ip] = self.per_ip.get(ip, 0) + 1
         return True
 
-    def release(self, ip: str) -> None:
+    def release(self, ip: str | None) -> None:
         self.total = max(0, self.total - 1)
+        if ip is None:  # slot was reserved but never charged to an IP
+            return
         remaining = self.per_ip.get(ip, 0) - 1
         if remaining <= 0:
             self.per_ip.pop(ip, None)
@@ -88,9 +109,17 @@ def _client_ip(raw: bytes, peer_ip: str) -> str:
 
     When nginx fronts us the peer is always 127.0.0.1, so every user would
     share one 127.0.0.1 bucket and the per-IP cap would collapse into a single
-    global budget. Pull the real client from X-Forwarded-For / X-Real-IP — but
-    ONLY when the peer is loopback (i.e. actually nginx), so a direct :8880
-    client can't spoof its IP to dodge the cap.
+    global budget. Pull the real client from the headers nginx sets — but ONLY
+    when the peer is loopback (i.e. actually nginx), so a direct :8880 client
+    can't spoof its IP to dodge the cap.
+
+    Trust order matters: nginx sets `X-Real-IP $remote_addr`, which OVERWRITES
+    any client-supplied value, so it's authoritative — prefer it. It also sets
+    `X-Forwarded-For $proxy_add_x_forwarded_for`, which PREPENDS the client's
+    own (spoofable) XFF ahead of the real remote_addr, so the trustworthy value
+    is the RIGHTMOST element, never the leftmost. Taking the leftmost element
+    (as before) let a client set `X-Forwarded-For: <random>` per handshake and
+    land in a fresh per-IP bucket every time, bypassing the cap entirely.
     """
     if peer_ip not in _LOOPBACK:
         return peer_ip
@@ -103,34 +132,45 @@ def _client_ip(raw: bytes, peer_ip: str) -> str:
         name, _, value = line.partition(":")
         n, v = name.strip().lower(), value.strip()
         if n == "x-forwarded-for" and v:
-            xff = v.split(",")[0].strip()
+            xff = v.split(",")[-1].strip()  # rightmost = the addr nginx appended
         elif n == "x-real-ip" and v:
             xreal = v
-    return xff or xreal or peer_ip
+    return xreal or xff or peer_ip
 
 
 async def handle(client_r, client_w, backend_host, backend_port, response, limiter, idle_timeout) -> None:
     peer = client_w.get_extra_info("peername")
     peer_ip = peer[0] if peer else "unknown"
 
-    # Read (and keep) the client's HTTP handshake FIRST — before the limiter —
-    # so we can recover the real client IP from X-Forwarded-For when nginx
-    # fronts us. The request itself is then discarded (injector-style): after
-    # the 101 the tunnel carries raw SSH, not this HTTP request.
-    raw = b""
-    try:
-        raw = await asyncio.wait_for(client_r.read(4096), timeout=10)
-    except asyncio.TimeoutError:
-        pass
-    ip = _client_ip(raw, peer_ip)
-
-    if not limiter.try_acquire(ip):
-        log.warning("rejecting connection from %s: connection limit reached (total=%d, per-ip max=%d)",
-                    ip, limiter.total, limiter.max_per_ip)
+    # Reserve a GLOBAL slot up-front — before the (up-to-10s) handshake read —
+    # so connections that never send bytes are bounded by the global cap
+    # instead of parking unbounded pre-handshake sockets. The real per-IP charge
+    # happens after we parse the client IP (which needs the handshake headers).
+    if not limiter.acquire_slot():
+        log.warning("rejecting connection from %s: global connection limit reached (max=%d)",
+                    peer_ip, limiter.max_total)
         with_suppress(client_w.close)
         return
 
+    ip = None
     try:
+        # Read (and keep) the client's HTTP handshake so we can recover the real
+        # client IP from X-Forwarded-For when nginx fronts us. The request is
+        # then discarded (injector-style): after the 101 the tunnel carries raw
+        # SSH, not this HTTP request.
+        raw = b""
+        try:
+            raw = await asyncio.wait_for(client_r.read(4096), timeout=10)
+        except asyncio.TimeoutError:
+            pass
+        ip = _client_ip(raw, peer_ip)
+        if not limiter.charge_ip(ip):
+            log.warning("rejecting connection from %s: per-ip limit reached (max=%d)",
+                        ip, limiter.max_per_ip)
+            ip = None  # nothing charged to this IP — release() only frees the global slot
+            with_suppress(client_w.close)
+            return
+
         try:
             client_w.write(response.encode("latin-1"))
             await client_w.drain()

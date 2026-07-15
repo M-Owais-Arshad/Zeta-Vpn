@@ -10,13 +10,13 @@
 
 [![CI](https://github.com/M-Owais-Arshad/Zeta-Vpn/actions/workflows/ci.yml/badge.svg)](https://github.com/M-Owais-Arshad/Zeta-Vpn/actions/workflows/ci.yml)
 &nbsp;![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-red)
-&nbsp;![version](https://img.shields.io/badge/version-1.2.1-blue)
+&nbsp;![version](https://img.shields.io/badge/version-1.3.0-blue)
 
 ZetaVPN turns a fresh Debian/Ubuntu VPS into a full proxy server managed from a modern
 web dashboard: **Xray-core** + **sing-box** + a complete **SSH tunnelling stack**, wired
 together by a FastAPI backend and installed straight from GitHub.
 
-`VLESS · VMess · Trojan · Shadowsocks-2022 · REALITY · Hysteria2 · TUIC · SSH-WS · SSH-SSL · Dropbear`
+`VLESS · VMess · Trojan · Shadowsocks-2022 · REALITY · Hysteria2 · TUIC · SSH-WS · SSH-SSL · Dropbear · MTProto`
 
 </div>
 
@@ -26,7 +26,18 @@ together by a FastAPI backend and installed straight from GitHub.
 
 - **All the protocols, two cores.** Xray-core serves VLESS (REALITY + XTLS-Vision), VMess,
   Trojan, Shadowsocks-2022, SOCKS and HTTP; sing-box adds the QUIC generation — Hysteria2 and
-  TUIC. A native SSH tunnelling stack (OpenSSH, Dropbear, stunnel/SSL, WebSocket) rounds it out.
+  TUIC. A native SSH tunnelling stack (OpenSSH, Dropbear, stunnel/SSL, WebSocket, plus UDP-over-SSH
+  via badvpn UDPGW for gaming/voice) rounds it out.
+- **Multiple ports per inbound.** WS-family inbounds front on the shared nginx :80/:443 (path-routed,
+  CDN-friendly) or bind any custom port directly, and a single inbound can listen on several ports
+  at once (`extra_ports`) — with an OS-level collision check so it never clashes with nginx/SSH/etc.
+- **Elite gaming tuning — the "Boost" tab.** One click applies a beast-grade low-latency profile
+  (BBR, fair-queue, large socket buffers, tuned conntrack) — every knob is applied only if the
+  kernel supports it (unsupported ones skip, nothing ever crashes) and turning it off restores the
+  box to its exact previous state.
+- **Telegram, built in.** A one-click **MTProto proxy** (mtg, FakeTLS) with a ready-to-share
+  `t.me/proxy` link, plus an optional **Telegram bot** that provisions accounts straight from the
+  panel — both toggled from the dashboard.
 - **One-command install from GitHub.** `curl | bash` detects your arch, pulls the core binaries
   from their official releases, sets up systemd services, nginx, TLS (acme.sh), BBR and a firewall.
 - **A real web portal — no build step.** A clean, dark, responsive dashboard (framework-free,

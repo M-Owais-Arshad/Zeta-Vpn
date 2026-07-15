@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # --- Identity / branding -------------------------------------------------
     brand: str = "ZetaVPN"
-    version: str = "1.2.1"
+    version: str = "1.3.0"
 
     # --- Filesystem layout ---------------------------------------------------
     home: Path = ZETA_HOME
@@ -105,12 +105,19 @@ class Settings(BaseSettings):
     # Xray's access log is the only source of per-connection source IPs (the
     # gRPC stats API only gives byte counters) — used to enforce Client.limit_ip.
     xray_access_log: Path = Path("/var/log/zetavpn/xray-access.log")
-    # How long since last activity before a source IP is considered offline
-    # (both for the "online" badge in the UI and the limit_ip check). Backed
-    # by real traffic, not just connection age — see access_log.py. Kept short
-    # (10s) so a client's IP frees up almost immediately after they drop off,
-    # instead of a stale/changed IP hogging the limit_ip slot for minutes.
+    # How long since last activity before a source IP is dropped from the
+    # concurrent-IP set that enforces Client.limit_ip. Backed by real traffic,
+    # not just connection age — see access_log.py. Kept short (10s) so a
+    # client's IP frees up almost immediately after they drop off, instead of a
+    # stale/changed IP hogging the limit_ip slot for minutes.
     ip_limit_window_seconds: int = 10
+    # Separate, LONGER window for the UI "online" badge (client_activity()).
+    # IP last-seen timestamps are refreshed only at poll time
+    # (stats_poll_seconds apart), so the DISPLAY window must span at least one
+    # full poll interval — otherwise a genuinely-online client flaps offline for
+    # most of every poll cycle. Decoupled from ip_limit_window_seconds so
+    # freeing the limit_ip slot quickly doesn't force the badge to read offline.
+    online_window_seconds: int = 60
 
     @property
     def db_path(self) -> Path:

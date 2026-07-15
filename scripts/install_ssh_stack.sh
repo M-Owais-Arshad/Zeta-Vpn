@@ -110,7 +110,16 @@ if ! [ -x /usr/local/bin/badvpn-udpgw ]; then
   _had_cmake=1; command -v cmake >/dev/null 2>&1 || _had_cmake=0
   if apt_install cmake gcc make git >/dev/null 2>&1; then
     _bv=$(mktemp -d)
-    if git clone --depth 1 https://github.com/ambrop72/badvpn.git "$_bv/badvpn" >/dev/null 2>&1 \
+    # Pin a known-good commit and verify it — mirroring the checksum-or-refuse
+    # policy used for mtg/xray/sing-box — so a moved or compromised upstream
+    # HEAD can't be built and run as root. A mismatch (or any failure) falls
+    # through to the graceful skip below: SSH still works, just no UDPGW. Full
+    # clone (not --depth 1) so the pinned SHA is always fetchable even once
+    # upstream HEAD advances past it.
+    BADVPN_COMMIT="07268f02706e78e282e19641b5d1d41e8e89bf31"
+    if git clone https://github.com/ambrop72/badvpn.git "$_bv/badvpn" >/dev/null 2>&1 \
+       && ( cd "$_bv/badvpn" && git checkout -q "$BADVPN_COMMIT" \
+            && [ "$(git rev-parse HEAD)" = "$BADVPN_COMMIT" ] ) \
        && ( cd "$_bv/badvpn" && mkdir -p build && cd build \
             && cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null 2>&1 \
             && make >/dev/null 2>&1 ) \
@@ -121,7 +130,11 @@ if ! [ -x /usr/local/bin/badvpn-udpgw ]; then
       warn "badvpn-udpgw build failed — SSH works, just no UDP/gaming gateway"
     fi
     rm -rf "$_bv"
-    [ "$_had_cmake" = 0 ] && { apt-get purge -y cmake >/dev/null 2>&1 || true; apt-get autoremove -y >/dev/null 2>&1 || true; }
+    # Only purge cmake if WE installed it — and never `apt-get autoremove`,
+    # which is system-wide and would sweep away unrelated orphaned packages on
+    # a shared box (breaking other software). Purging cmake alone drops just
+    # cmake; its build deps are harmless to leave.
+    [ "$_had_cmake" = 0 ] && { apt-get purge -y cmake >/dev/null 2>&1 || true; }
   else
     warn "badvpn build deps unavailable — skipping UDPGW (SSH still works)"
   fi

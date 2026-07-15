@@ -103,7 +103,13 @@ def client_activity() -> dict[str, list[str]]:
     Used to show an "online" badge + recent IPs per client in the UI.
     """
     now = time.time()
-    window_start = now - settings.ip_limit_window_seconds
+    # UI-only display window: must span at least one poll interval (timestamps
+    # refresh only per poll) or an active client flaps offline between polls.
+    # This is looser than the ip_limit_window used for enforcement — it never
+    # relaxes the limit_ip cap, since poll_concurrent_ips() already pruned
+    # _recent_ips to the short window at the last poll.
+    window = max(settings.online_window_seconds, settings.stats_poll_seconds + 15)
+    window_start = now - window
     return {
         email: sorted(ip for ip, last_seen in ips.items() if last_seen >= window_start)
         for email, ips in _recent_ips.items()

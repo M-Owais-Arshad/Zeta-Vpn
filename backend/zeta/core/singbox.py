@@ -278,9 +278,15 @@ def client_activity() -> dict[str, list[str]]:
 
     Mirrors ``core/access_log.client_activity()``; reflects state as of the
     last ``query_stats()`` poll rather than hitting the Clash API again.
+
+    Uses the looser UI display window so the "online" badge doesn't flap
+    between polls. Safe for the limit_ip path too: tasks.py calls this only
+    right after ``query_stats(reset=True)`` has already pruned ``_recent_ips``
+    to the short ip_limit window, so no stale IP survives to be over-counted.
     """
     now = time.time()
-    window_start = now - settings.ip_limit_window_seconds
+    window = max(settings.online_window_seconds, settings.stats_poll_seconds + 15)
+    window_start = now - window
     return {
         user: sorted(ip for ip, last_seen in ips.items() if last_seen >= window_start)
         for user, ips in _recent_ips.items()

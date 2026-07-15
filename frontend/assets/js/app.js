@@ -851,8 +851,11 @@
           r.ok === false ? toast(r.detail || "Failed", "err") : toast("Elite tuning is ON — server boosted"); renderTune();
         } catch (ex) { toast(ex.message, "err"); } }); };
       if (off) off.onclick = async function (e) {
+        // Capture the button BEFORE awaiting: once the handler suspends on the
+        // await, event dispatch ends and e.currentTarget resets to null.
+        var btn = e.currentTarget;
         if (!(await confirmModal({ title: "Turn off tuning", message: "Revert all gaming tuning and return the server to its exact previous state?", confirm: "Turn off" }))) return;
-        busy(e.currentTarget, async function () {
+        busy(btn, async function () {
           try { await Z.post("/system/tuning/stop"); tune.active = false; toast("Tuning off — server restored"); renderTune(); }
           catch (ex) { toast(ex.message, "err"); } }); };
     }
@@ -870,8 +873,11 @@
           tg = Object.assign({ active: true }, r); toast("Telegram proxy is live"); renderTg();
         } catch (ex) { toast(ex.message, "err"); } }); };
       if (off) off.onclick = async function (e) {
+        // Capture the button BEFORE awaiting (see the tuning-off handler): after
+        // the await, event dispatch has ended and e.currentTarget is null.
+        var btn = e.currentTarget;
         if (!(await confirmModal({ title: "Turn off Telegram proxy", message: "Stop and remove the MTProto proxy? The current link stops working.", confirm: "Turn off" }))) return;
-        busy(e.currentTarget, async function () {
+        busy(btn, async function () {
           try { await Z.post("/system/tgproxy/stop"); tg = { active: false }; toast("Telegram proxy removed"); renderTg(); }
           catch (ex) { toast(ex.message, "err"); } }); };
     }

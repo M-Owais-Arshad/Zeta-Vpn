@@ -25,14 +25,37 @@ crontab -l 2>/dev/null | grep -v 'zeta expire-check' | crontab - 2>/dev/null || 
 rm -f /etc/nginx/conf.d/zeta.conf /etc/nginx/conf.d/zeta-gzip.conf /etc/nginx/zeta-inbounds.conf
 systemctl reload nginx 2>/dev/null || true
 # The panel process is already gone (units removed above), so its sudo
-# delegation is dead weight either way — always drop it.
-rm -f /etc/sudoers.d/zetavpn-panel /usr/local/sbin/zeta-privileged
+# delegation is dead weight either way — always drop it. Revert the elite
+# gaming tuning FIRST (while its helper still exists), so we never leave the
+# kernel permanently tuned after the panel that managed it is gone, then drop
+# every privileged helper install.sh laid down (not just zeta-privileged).
+if [ -x /usr/local/sbin/zeta-tuning ]; then
+  /usr/local/sbin/zeta-tuning revert >/dev/null 2>&1 || true
+fi
+rm -f /etc/sudoers.d/zetavpn-panel \
+      /usr/local/sbin/zeta-privileged \
+      /usr/local/sbin/zeta-tuning \
+      /usr/local/sbin/zeta-tgproxy
+# The gaming sysctl drop-in is re-applied by systemd-sysctl on EVERY boot,
+# independently of any ZetaVPN unit — removing the service alone doesn't stop
+# it, so delete the file explicitly (revert above normally does, this is
+# belt-and-suspenders). Older builds named it 99-zeta-gaming.conf.
+rm -f /etc/sysctl.d/99-zzz-zeta-gaming.conf /etc/sysctl.d/99-zeta-gaming.conf
 
 if [ "$PURGE" -eq 1 ]; then
   warn "Purging cores, SSH-stack config, firewall rules and data"
   rm -f "$XRAY_BIN" "$SINGBOX_BIN"
   rm -rf "$XRAY_DIR" "$SINGBOX_DIR" "$ZETA_CERT_DIR" "$ZETA_HOME" /var/log/zetavpn
   rm -f /etc/sysctl.d/99-zeta.conf /etc/ssh/sshd_config.d/zeta.conf /etc/ssh/sshd_config.d/00-zeta.conf
+
+  # v1.3 artifacts: the MTProto proxy (mtg binary + /etc/mtg, which holds the
+  # live FakeTLS secret at rest), the UDPGW gateway, and the tuning snapshot
+  # backups. Removing the units above doesn't touch these on-disk files.
+  rm -f /usr/local/bin/mtg /usr/local/bin/badvpn-udpgw
+  rm -rf /etc/mtg /var/backups/zeta-tune
+  # Reverted sysctls take effect on the next boot regardless; re-apply now so
+  # the box is back to its stock kernel tuning immediately.
+  sysctl --system >/dev/null 2>&1 || true
 
   # SSH stack: stop the services and drop ZetaVPN's own config for them.
   # The dropbear/stunnel4 *packages* are left installed (apt remove could
@@ -54,7 +77,8 @@ if [ "$PURGE" -eq 1 ]; then
   # uses — a custom install may have used different SSH-stack ports, which
   # this can't know in retrospect; best-effort).
   if command -v ufw >/dev/null 2>&1; then
-    for p in 22 80 443 149 143 445 8880; do
+    # 8443 = the MTProto proxy's default port (ZETA_MTPROXY_PORT).
+    for p in 22 80 443 149 143 445 8880 8443; do
       ufw delete allow "${p}/tcp" >/dev/null 2>&1 || true
     done
     ufw delete allow 443/udp >/dev/null 2>&1 || true

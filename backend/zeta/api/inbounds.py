@@ -101,11 +101,17 @@ def _panel_direct_ports(db: Session, exclude_id: int | None, family: str) -> set
 def _validate_ports(
     db: Session, primary_port: int, fronted: bool, protocol: str,
     extra_ports: list[int] | None, exclude_id: int | None,
+    own_existing: set[int] | None = None,
 ) -> list[int]:
     """Clean the extra_ports list and reject any direct-port collision — with
     another inbound (primary or extra) or an external service (nginx/SSH/…).
     Returns the de-duplicated extras. Also covers the primary when it's a
     direct bind (fronted primaries live on nginx's shared :80/:443).
+
+    `own_existing` is the set of direct ports THIS inbound already binds (its
+    currently-persisted, live listeners) — passed on update so we don't flag
+    an unchanged port as an "external" collision against xray's own socket.
+    On create it's empty: a brand-new inbound owns nothing yet.
     """
     family = protocols.l4_family(protocol)
     cleaned: list[int] = []
@@ -126,8 +132,14 @@ def _validate_ports(
     for p in new_direct:
         if p in owned:
             raise HTTPException(status.HTTP_409_CONFLICT, f"Port {p} is already used by another inbound")
+    # Exempt only OUR own already-bound sockets (other panel inbounds + this
+    # inbound's current listeners) from the OS-level check — NOT the candidate
+    # ports themselves. Putting new_direct in the exempt set made the guard dead
+    # code (the candidate is always a member → external_conflict short-circuits
+    # to False), silently letting a direct bind collide with nginx/sshd/etc.
+    exempt = owned | (own_existing or set())
     for p in new_direct:
-        if portcheck.external_conflict(p, family, owned | set(new_direct)):
+        if portcheck.external_conflict(p, family, exempt):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 f"Port {p}/{family} is already in use by another service on this server "
@@ -327,7 +339,12 @@ def update_inbound(
             )
     if not fronted:
         ib.internal_port = None
-    ib.extra_ports = _validate_ports(db, ib.port, fronted, ib.protocol, ib.extra_ports, exclude_id=ib.id)
+    # Pass old_direct so this inbound's own already-bound ports (still live in
+    # the core at validation time) aren't misread as an external collision.
+    ib.extra_ports = _validate_ports(
+        db, ib.port, fronted, ib.protocol, ib.extra_ports,
+        exclude_id=ib.id, own_existing=old_direct,
+    )
 
     new_port_key = protocols.compute_port_key(ib.port, ib.protocol, ib.network, ib.stream_settings)
     if new_port_key != ib.port_key:

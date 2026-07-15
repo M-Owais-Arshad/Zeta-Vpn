@@ -43,9 +43,15 @@ def _accumulate_once() -> None:
                 for client in db.query(Client).filter(Client.email == email).all():
                     client.up = (client.up or 0) + rec["up"]
                     client.down = (client.down or 0) + rec["down"]
-            # Per-inbound usage.
+            # Per-inbound usage. Extra-port listeners are tagged "<tag>@<port>"
+            # (see core/xray.build_inbounds), so fold their traffic back into
+            # the base inbound — otherwise every byte over an extra_port is
+            # dropped from the inbound/dashboard totals. Only strip a trailing
+            # "@<digits>" (a port); real tags may legitimately contain '@'.
             for tag, rec in stats["inbounds"].items():
-                ib = db.query(Inbound).filter(Inbound.tag == tag).first()
+                base, sep, suffix = tag.rpartition("@")
+                lookup = base if sep and suffix.isdigit() else tag
+                ib = db.query(Inbound).filter(Inbound.tag == lookup).first()
                 if ib:
                     ib.up = (ib.up or 0) + rec["up"]
                     ib.down = (ib.down or 0) + rec["down"]
