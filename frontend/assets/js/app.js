@@ -685,12 +685,11 @@
     function refreshPort() {
       var s = spec(), n = net.value;
       var isWs = s.ws_family_networks.indexOf(n) !== -1;
+      port.disabled = false;
       if (isWs) {
-        port.value = 80;
-        port.disabled = true;
-        portHint.textContent = "WS-family transports always share port 80 via nginx, routed by the path below — users connect to :80.";
+        if (!portTouched) port.value = isEdit ? existing.port : 80;
+        portHint.textContent = "Port 80 or 443 → shared via nginx, routed by the path below (path required). Any other port (e.g. 8080) → its own dedicated listener, path optional.";
       } else {
-        port.disabled = false;
         portHint.textContent = "";
         if (!portTouched) port.value = (s.ports_by_network && s.ports_by_network[n]) || s.default_port;
       }
@@ -711,7 +710,7 @@
         var p0 = (ss0[n] && ss0[n].path) || "/" + proto.value;
         var h0 = (ss0[n] && ss0[n].host) || "";
         html += field("WebSocket / HTTP path", '<input id="d-path" value="' + esc(p0) + '">',
-          "Users connect to port 80 with this path — must be unique per inbound.");
+          "On the shared :80/:443 port this routes the inbound (required, unique). On a dedicated port (e.g. 8080) it's optional — set any path or leave it blank.");
         html += field("Host header (optional)", '<input id="d-host" placeholder="cdn.example.com" value="' + esc(h0) + '">');
       }
       if (n === "grpc") {
@@ -1095,7 +1094,8 @@
     { label: "Dropbear (alt)", value: function (h) { return h + ":143"; } },
     { label: "SSH-over-SSL (stunnel)", value: function (h) { return h + ":445"; } },
     { label: "SSH-over-WebSocket (direct)", value: function (h) { return h + ":8880"; } },
-    { label: "SSH-over-WebSocket (via nginx :80, CDN/bug-host friendly)", value: function (h) { return h + ":80  (path: /zeta-ws)"; } },
+    { label: "SSH-over-WebSocket (nginx :80, no TLS — CDN/bug-host)", value: function (h) { return h + ":80  (path: /zeta-ws, or any/blank)"; } },
+    { label: "SSH-over-WebSocket over TLS (nginx :443)", value: function (h) { return h + ":443  (path: /zeta-ws)"; } },
   ];
 
   function fmtExpiryPlain(isoDate) {
@@ -1119,7 +1119,8 @@
       "OpenSSH  : " + host + ":22",
       "Dropbear : " + host + ":149, " + host + ":143",
       "SSH-SSL  : " + host + ":445",
-      "SSH-WS   : " + host + ":8880  (or " + host + ":80 path=/zeta-ws)",
+      "SSH-WS   : " + host + ":8880 (direct)  |  " + host + ":80 (no TLS, path /zeta-ws or any)",
+      "SSH-WS/TLS: " + host + ":443 (path /zeta-ws)",
     ].join("\n");
   }
 

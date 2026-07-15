@@ -58,7 +58,7 @@ def _ws_path(network: str, stream_settings: dict) -> str:
     return ((stream_settings or {}).get(network) or {}).get("path", "").strip()
 
 
-def _flush_or_409(db: Session, port: int, tag: str, is_ws: bool, ws_path: str | None) -> None:
+def _flush_or_409(db: Session, port: int, tag: str, fronted: bool, ws_path: str | None) -> None:
     """Flush pending changes, translating a unique-port_key/tag race into a 409.
 
     The pre-checks in create/update_inbound are a TOCTOU race under
@@ -73,9 +73,10 @@ def _flush_or_409(db: Session, port: int, tag: str, is_ws: bool, ws_path: str | 
         msg = str(exc.orig).lower()
         if "tag" in msg:
             raise HTTPException(status.HTTP_409_CONFLICT, f"Inbound tag '{tag}' already exists")
-        if is_ws:
+        if fronted:
             raise HTTPException(
-                status.HTTP_409_CONFLICT, f"WS path '{ws_path}' on :80 is already used by another inbound"
+                status.HTTP_409_CONFLICT,
+                f"WS path '{ws_path}' on the shared :80/:443 port is already used by another inbound",
             )
         raise HTTPException(status.HTTP_409_CONFLICT, f"Port {port} already in use by another inbound")
 
@@ -165,27 +166,37 @@ def create_inbound(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
     is_ws = protocols.is_ws_family(body.network)
+    # Auto-infer the mode from the port: a WS inbound on a port nginx owns
+    # (:80/:443) is nginx-fronted (shared, path-routed); on ANY other port it
+    # binds that port directly (xray listens) — this is what makes VLESS-WS on
+    # :8080, or several WS inbounds on different ports, possible.
+    if body.port is not None:
+        port = body.port
+    elif is_ws:
+        port = 80  # default WS => fronted on the shared :80 (CDN-friendly)
+    else:
+        port = protocols.default_port(body.protocol, body.network)
+    fronted = protocols.is_fronted(body.network, port)
+
     ws_path = None
     if is_ws:
-        # Always :80, shared with nginx and every other WS-family inbound —
-        # whatever port the caller sent is irrelevant, see core/nginx.py.
-        port = 80
         ws_path = _ws_path(body.network, stream)
-        if not ws_path.startswith("/"):
+        if fronted and not ws_path.startswith("/"):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                "WS-family transports need a path starting with '/' "
-                "(stream_settings.<network>.path)",
+                "A WS inbound sharing the :80/:443 port needs a path starting with '/' "
+                "(stream_settings.<network>.path). Give it its own dedicated port instead "
+                "for a free or empty path.",
             )
-    else:
-        port = body.port if body.port is not None else protocols.default_port(body.protocol, body.network)
+    if not fronted:
         _check_external_port_conflict(db, port, body.protocol, exclude_id=None)
 
     port_key = protocols.compute_port_key(port, body.protocol, body.network, stream)
     if db.query(Inbound).filter(Inbound.port_key == port_key).first():
-        if is_ws:
+        if fronted:
             raise HTTPException(
-                status.HTTP_409_CONFLICT, f"WS path '{ws_path}' on :80 is already used by another inbound"
+                status.HTTP_409_CONFLICT,
+                f"WS path '{ws_path}' on the shared :80/:443 port is already used by another inbound",
             )
         raise HTTPException(status.HTTP_409_CONFLICT, f"Port {port} already in use by another inbound")
 
@@ -205,22 +216,25 @@ def create_inbound(
         port_key=port_key,
     )
     db.add(ib)
-    _flush_or_409(db, port, body.tag, is_ws, ws_path)
-    if is_ws:
+    _flush_or_409(db, port, body.tag, fronted, ws_path)
+    if fronted:
         # Needs ib.id, which only exists after the flush above; xray.apply()
-        # (next) must see this already set or it'd render a direct bind on
-        # :80 and collide with nginx all over again.
+        # (next) must see this set or it'd bind the public :80/:443 directly and
+        # collide with nginx. A DIRECT WS inbound keeps internal_port NULL and
+        # binds `port` itself (see core/xray.build_inbound).
         ib.internal_port = _INTERNAL_PORT_BASE + ib.id
         db.flush()
     _apply_or_422(db, ib.core)
     db.commit()
     db.refresh(ib)
 
-    if is_ws:
+    if fronted:
         res = nginx.sync(db)
         if not res.ok:
             log.warning("nginx sync failed after creating inbound %s: %s", ib.id, res.stderr or res.stdout)
     else:
+        # Direct inbounds (incl. a direct WS inbound on its own custom port) own
+        # a real listening port the firewall must open.
         firewall.allow(ib.port, ib.protocol)
     return _to_out(ib)
 
@@ -247,7 +261,8 @@ def update_inbound(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Inbound not found")
 
     data = body.model_dump(exclude_unset=True)
-    old_port, old_is_ws = ib.port, protocols.is_ws_family(ib.network)
+    old_port = ib.port
+    old_fronted = protocols.is_fronted(ib.network, ib.port)
 
     if ib.protocol == "shadowsocks" and "settings" in data:
         method = data["settings"].get("method", ib.settings.get("method", ""))
@@ -260,52 +275,54 @@ def update_inbound(
         setattr(ib, field, value)
 
     is_ws = protocols.is_ws_family(ib.network)
+    fronted = protocols.is_fronted(ib.network, ib.port)
     ws_path = None
     if is_ws:
-        ib.port = 80
         ws_path = _ws_path(ib.network, ib.stream_settings)
-        if not ws_path.startswith("/"):
+        if fronted and not ws_path.startswith("/"):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                "WS-family transports need a path starting with '/' "
-                "(stream_settings.<network>.path)",
+                "A WS inbound sharing the :80/:443 port needs a path starting with '/' "
+                "(stream_settings.<network>.path). Give it its own dedicated port instead "
+                "for a free or empty path.",
             )
-    else:
+    if not fronted:
         ib.internal_port = None
-        if ib.port != old_port or old_is_ws:
+        if ib.port != old_port or old_fronted:
             _check_external_port_conflict(db, ib.port, ib.protocol, exclude_id=ib.id)
 
     new_port_key = protocols.compute_port_key(ib.port, ib.protocol, ib.network, ib.stream_settings)
     if new_port_key != ib.port_key:
         clash = db.query(Inbound).filter(Inbound.port_key == new_port_key, Inbound.id != ib.id).first()
         if clash:
-            if is_ws:
+            if fronted:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
-                    f"WS path '{ws_path}' on :80 is already used by another inbound",
+                    f"WS path '{ws_path}' on the shared :80/:443 port is already used by another inbound",
                 )
             raise HTTPException(status.HTTP_409_CONFLICT, f"Port {ib.port} already in use by another inbound")
         ib.port_key = new_port_key
 
-    _flush_or_409(db, ib.port, ib.tag, is_ws, ws_path)
-    if is_ws and ib.internal_port is None:
+    _flush_or_409(db, ib.port, ib.tag, fronted, ws_path)
+    if fronted and ib.internal_port is None:
         ib.internal_port = _INTERNAL_PORT_BASE + ib.id
         db.flush()
     _apply_or_422(db, ib.core)
     db.commit()
     db.refresh(ib)
 
-    if old_is_ws and is_ws:
+    # The nginx include is the set of fronted inbounds — resync if this one is
+    # or was fronted. Direct inbounds (incl. direct WS) own a real port the
+    # firewall must open/close.
+    if old_fronted or fronted:
         nginx.sync(db)
-    elif old_is_ws and not is_ws:
-        nginx.sync(db)
+    if not fronted and old_fronted:
+        firewall.allow(ib.port, ib.protocol)            # became a direct port
+    elif not fronted and ib.port != old_port:
+        firewall.revoke(old_port, ib.protocol)          # moved direct port
         firewall.allow(ib.port, ib.protocol)
-    elif not old_is_ws and is_ws:
-        firewall.revoke(old_port, ib.protocol)
-        nginx.sync(db)
-    elif ib.port != old_port:
-        firewall.revoke(old_port, ib.protocol)
-        firewall.allow(ib.port, ib.protocol)
+    elif fronted and not old_fronted:
+        firewall.revoke(old_port, ib.protocol)          # direct port -> fronted
     return _to_out(ib)
 
 
@@ -321,7 +338,7 @@ def toggle_inbound(
     _apply_or_422(db, ib.core)
     db.commit()
     db.refresh(ib)
-    if protocols.is_ws_family(ib.network):
+    if protocols.is_fronted(ib.network, ib.port):
         nginx.sync(db)
     return _to_out(ib)
 
@@ -334,14 +351,16 @@ def delete_inbound(
     if ib is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Inbound not found")
     core = ib.core
-    port, protocol, is_ws = ib.port, ib.protocol, protocols.is_ws_family(ib.network)
+    port, protocol = ib.port, ib.protocol
+    fronted = protocols.is_fronted(ib.network, ib.port)
     db.delete(ib)
     db.flush()
     _apply_or_422(db, core)
     db.commit()
-    if is_ws:
+    if fronted:
         nginx.sync(db)
     else:
+        # Direct inbounds (incl. a direct WS on its own port) own a real port.
         firewall.revoke(port, protocol)
     return {"ok": True}
 

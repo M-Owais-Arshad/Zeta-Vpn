@@ -69,8 +69,9 @@ class InboundBase(BaseModel):
     protocol: str
     listen: str = "0.0.0.0"
     # Optional: falls back to a sensible per-protocol/transport default (see
-    # core/protocols.default_port) when omitted — and is ignored entirely
-    # for WS-family transports, which are always forced to :80.
+    # core/protocols.default_port) when omitted. For a WS-family transport,
+    # :80/:443 => nginx-fronted (shared, path-routed); any other port =>
+    # xray binds it directly (e.g. VLESS-WS on :8080). See core/protocols.is_fronted.
     port: int | None = Field(default=None, ge=1, le=65535)
     network: str = "tcp"
     security: str = "none"

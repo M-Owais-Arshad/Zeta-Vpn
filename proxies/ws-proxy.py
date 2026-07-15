@@ -80,9 +80,49 @@ def with_suppress(fn) -> None:
         pass
 
 
+_LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+
+def _client_ip(raw: bytes, peer_ip: str) -> str:
+    """The IP to charge the per-IP cap against.
+
+    When nginx fronts us the peer is always 127.0.0.1, so every user would
+    share one 127.0.0.1 bucket and the per-IP cap would collapse into a single
+    global budget. Pull the real client from X-Forwarded-For / X-Real-IP — but
+    ONLY when the peer is loopback (i.e. actually nginx), so a direct :8880
+    client can't spoof its IP to dodge the cap.
+    """
+    if peer_ip not in _LOOPBACK:
+        return peer_ip
+    try:
+        head = raw.split(b"\r\n\r\n", 1)[0].decode("latin-1", "replace")
+    except Exception:  # noqa: BLE001
+        return peer_ip
+    xff = xreal = None
+    for line in head.split("\r\n")[1:]:
+        name, _, value = line.partition(":")
+        n, v = name.strip().lower(), value.strip()
+        if n == "x-forwarded-for" and v:
+            xff = v.split(",")[0].strip()
+        elif n == "x-real-ip" and v:
+            xreal = v
+    return xff or xreal or peer_ip
+
+
 async def handle(client_r, client_w, backend_host, backend_port, response, limiter, idle_timeout) -> None:
     peer = client_w.get_extra_info("peername")
-    ip = peer[0] if peer else "unknown"
+    peer_ip = peer[0] if peer else "unknown"
+
+    # Read (and keep) the client's HTTP handshake FIRST — before the limiter —
+    # so we can recover the real client IP from X-Forwarded-For when nginx
+    # fronts us. The request itself is then discarded (injector-style): after
+    # the 101 the tunnel carries raw SSH, not this HTTP request.
+    raw = b""
+    try:
+        raw = await asyncio.wait_for(client_r.read(4096), timeout=10)
+    except asyncio.TimeoutError:
+        pass
+    ip = _client_ip(raw, peer_ip)
 
     if not limiter.try_acquire(ip):
         log.warning("rejecting connection from %s: connection limit reached (total=%d, per-ip max=%d)",
@@ -92,14 +132,8 @@ async def handle(client_r, client_w, backend_host, backend_port, response, limit
 
     try:
         try:
-            # Read (and discard) the client's HTTP handshake, then switch protocols.
-            try:
-                await asyncio.wait_for(client_r.read(4096), timeout=10)
-            except asyncio.TimeoutError:
-                pass
             client_w.write(response.encode("latin-1"))
             await client_w.drain()
-
             backend_r, backend_w = await asyncio.open_connection(backend_host, backend_port)
         except OSError as exc:
             log.warning("backend connect failed for %s: %s", peer, exc)

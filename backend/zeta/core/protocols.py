@@ -136,12 +136,21 @@ REGISTRY: dict[str, ProtocolSpec] = {
     ),
 }
 
-# Transports nginx fronts on the shared public port 80 (or 443 once a domain
+# Transports nginx CAN front on the shared public port 80 (or 443 once a domain
 # + cert are configured) via a per-inbound path -> loopback proxy (see
-# core/nginx.py) — xray itself only ever binds a 127.0.0.1 loopback port for
-# these. UDP-only (QUIC) protocols never go through nginx at all.
+# core/nginx.py). UDP-only (QUIC) protocols never go through nginx at all.
 WS_FAMILY_NETWORKS = {"ws", "httpupgrade", "xhttp"}
 UDP_ONLY_PROTOCOLS = {"hysteria2", "tuic"}
+
+# A WS-family inbound is "nginx-fronted" (xray binds a 127.0.0.1 loopback port,
+# nginx routes its path on the shared public port) ONLY when it sits on a port
+# nginx itself owns — :80, or :443 once TLS is configured. On ANY other port it
+# binds that port DIRECTLY (xray listens on 0.0.0.0:<port> with the WS
+# transport), exactly like a direct TCP inbound. This is what lets a user run
+# e.g. VLESS-WS on :8080, or several WS inbounds of the same protocol on
+# different ports, without disturbing the shared :80 stack — the port_key
+# registry keeps every one collision-free (see compute_port_key).
+FRONTED_PORTS = {80, 443}
 
 # Sensible default public port per protocol when NOT using a WS-family
 # transport (those are always 80 — see default_port()). Matches common
@@ -168,6 +177,17 @@ def is_ws_family(network: str) -> bool:
     return network in WS_FAMILY_NETWORKS
 
 
+def is_fronted(network: str, port: int) -> bool:
+    """True if this WS-family inbound is served via nginx on the shared port.
+
+    Fronted => xray binds a loopback port + nginx routes the path (needs a
+    path, shares :80/:443). Not fronted => xray binds `port` directly and the
+    path is optional/free (its own dedicated port). Non-WS protocols are never
+    fronted.
+    """
+    return is_ws_family(network) and port in FRONTED_PORTS
+
+
 def l4_family(protocol: str) -> str:
     """'tcp' or 'udp' — which port space this protocol actually occupies.
 
@@ -189,11 +209,20 @@ def default_port(protocol: str, network: str | None = None) -> int:
 def compute_port_key(port: int, protocol: str, network: str, stream_settings: dict) -> str:
     """The real collision key for an inbound — see models.Inbound.port_key.
 
-    WS-family inbounds all sit on :80 by design, differentiated by the nginx
-    path nginx routes on, not the port number; direct inbounds collide only
-    with others on the same port AND the same L4 family.
+    An nginx-fronted WS inbound shares the public port (:80/:443) with others,
+    differentiated by the path nginx routes on -> key is "<port>:<path>". A
+    DIRECT inbound (any non-WS, or a WS-family inbound on a non-fronted port
+    like :8080) owns its port and collides only with others on the same port
+    AND the same L4 family -> key is "<port>:<tcp|udp>". This lets multiple WS
+    inbounds coexist both on shared paths (:80) and on their own ports.
     """
-    if is_ws_family(network):
+    if is_fronted(network, port):
+        # All fronted WS inbounds share nginx's include (served on :80 and, on a
+        # TLS box, :443) so the PATH must be unique across every fronted inbound
+        # regardless of 80-vs-443 — key on the literal shared port, not `port`,
+        # or two same-path inbounds (one :80, one :443) would emit a duplicate
+        # nginx `location` and break the reload. (Also keeps the key format
+        # backward-compatible with rows created before per-port direct WS.)
         path = ((stream_settings or {}).get(network, {}) or {}).get("path") or "/"
         return f"80:{path}"
     return f"{port}:{l4_family(protocol)}"

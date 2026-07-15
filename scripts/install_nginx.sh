@@ -62,6 +62,9 @@ if id -u zetavpn >/dev/null 2>&1; then
   chown zetavpn:zetavpn "$ZETA_INBOUNDS_INCLUDE"
 fi
 
+# Explicit SSH-over-WebSocket path (the recommended, unambiguous route). Also
+# feeds the ws-proxy a real client IP (X-Real-IP/X-Forwarded-For) so its
+# per-IP connection cap keys on the actual user, not the 127.0.0.1 nginx hop.
 WS_LOCATION=$(cat <<CONF
     location ${WS_PATH} {
         proxy_pass http://127.0.0.1:${WS_PORT};
@@ -69,6 +72,8 @@ WS_LOCATION=$(cat <<CONF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
@@ -89,18 +94,64 @@ PANEL_LOCATION=$(cat <<CONF
 CONF
 )
 
+# http-context map: on the plain-:80 catch-all, a request carrying a WebSocket
+# Upgrade header goes to the SSH-over-WS proxy (so bug-host / DarkTunnel clients
+# tunnel SSH on ANY path — or no path — with no TLS); everything else is the panel.
+cat > /etc/nginx/conf.d/zeta-upstream.conf <<CONF
+map \$http_upgrade \$zeta_root_upstream {
+    default  http://127.0.0.1:${WS_PORT};
+    ""       http://127.0.0.1:${PANEL_PORT};
+}
+CONF
+
+# Upgrade-aware catch-all for the plain-HTTP :80 server: WebSocket -> SSH-WS
+# proxy (path-free), everything else -> panel.
+ROOT_LOCATION_HTTP=$(cat <<CONF
+    location / {
+        proxy_pass \$zeta_root_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+CONF
+)
+
+# Same idea for the :80 server in TLS mode, but a normal (non-WebSocket) request
+# is redirected to HTTPS instead of served over plain HTTP. A WebSocket handshake
+# on any path (bug-host GET /) is piped to the SSH-WS proxy — this is what makes
+# SSH-over-WS work on :80 even with a domain + cert (the old catch-all 301'd it).
+ROOT_LOCATION_TLS80=$(cat <<CONF
+    location / {
+        if (\$http_upgrade = "") { return 301 https://\$host\$request_uri; }
+        proxy_pass http://127.0.0.1:${WS_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+CONF
+)
+
 if [ -n "$DOMAIN" ] && [ -f "${ZETA_CERT_DIR}/fullchain.pem" ]; then
   msg "Configuring HTTPS vhost for ${DOMAIN}"
   cat > /etc/nginx/conf.d/zeta.conf <<CONF
 server {
     listen 80;
     server_name ${DOMAIN};
-    # WS-family inbounds stay reachable on plain :80 even in domain/TLS mode
-    # (nginx picks the most specific matching location, so these paths win
-    # over the catch-all redirect below regardless of file order); anything
-    # else gets redirected to https as usual.
+    # WS-family inbounds, the SSH-WS path, and any bug-host WebSocket handshake
+    # stay reachable on plain :80 even in TLS mode (most-specific location wins);
+    # a normal browser request (no Upgrade header) is redirected to HTTPS.
     include ${ZETA_INBOUNDS_INCLUDE};
-    location / { return 301 https://\$host\$request_uri; }
+${WS_LOCATION}
+${ROOT_LOCATION_TLS80}
 }
 server {
     listen 443 ssl http2;
@@ -109,6 +160,8 @@ server {
     ssl_certificate_key ${ZETA_CERT_DIR}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+    # Parity with :80 — VLESS-WS paths and /zeta-ws also work TLS-terminated here.
+    include ${ZETA_INBOUNDS_INCLUDE};
 ${WS_LOCATION}
 ${PANEL_LOCATION}
 }
@@ -121,7 +174,7 @@ server {
     server_name _;
     include ${ZETA_INBOUNDS_INCLUDE};
 ${WS_LOCATION}
-${PANEL_LOCATION}
+${ROOT_LOCATION_HTTP}
 }
 CONF
 fi
