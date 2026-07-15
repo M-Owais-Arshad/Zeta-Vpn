@@ -1,0 +1,21 @@
+[Unit]
+Description=ZetaVPN Telegram bot
+After=network-online.target zeta-panel.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zetavpn
+Group=zetavpn
+WorkingDirectory=/opt/zetavpn/backend
+EnvironmentFile=-/opt/zetavpn/.env
+ExecStart=/opt/zetavpn/venv/bin/python -m zeta.bot
+Restart=always
+RestartSec=5
+# Light control-plane process — keep it off the data plane's back on a 1GB box.
+Nice=10
+CPUWeight=40
+MemoryHigh=180M
+
+[Install]
+WantedBy=multi-user.target

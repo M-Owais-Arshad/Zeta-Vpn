@@ -809,9 +809,10 @@
   // -------- Boost & Tuning (elite gaming tuning + Telegram proxy) --------
   VIEWS.tuning = async function (page, route, ep) {
     setTitle("Boost & Tuning", "Elite gaming network tuning & Telegram proxy");
-    var tune = { active: false }, tg = { active: false };
+    var tune = { active: false }, tg = { active: false }, bot = { active: false };
     try { tune = await Z.get("/system/tuning"); } catch (e) { /* degrade if endpoint missing */ }
     try { tg = await Z.get("/system/tgproxy"); } catch (e) { /* degrade */ }
+    try { bot = await Z.get("/system/bot"); } catch (e) { /* degrade */ }
     if (stale(ep)) return;
 
     function tgLinks(t) {
@@ -832,7 +833,11 @@
         '<span class="badge ' + (tg.active ? "on" : "neutral") + '" id="tg-badge">' + (tg.active ? "Active" : "Off") + "</span></div>" +
         '<p class="hint">Build a Telegram <b>MTProto</b> proxy (mtg, FakeTLS-camouflaged) on this server with one tap — great for users on networks that throttle Telegram. Runs on a dedicated port so it never clashes with your proxy inbounds.</p>' +
         '<div class="btn-row" id="tg-actions"></div><div id="tg-links">' + tgLinks(tg) + "</div></div>" +
-      "</div>";
+      "</div>" +
+      '<div class="card pad-lg" id="bot-card"><div class="card-head"><h3>🤖 Telegram Bot</h3>' +
+        '<span class="badge ' + (bot.active ? "on" : "neutral") + '" id="bot-badge">' + (bot.active ? "Running" : "Off") + "</span></div>" +
+        '<p class="hint">A Telegram bot that lets your users self-serve — free trial, buy a plan, and get their config — while you approve payments and create accounts right from Telegram. Everything it does syncs with this dashboard. Set the <b>bot token</b> and your <b>admin chat ID</b> under <b>Settings → Telegram</b> first.</p>' +
+        '<div class="btn-row" id="bot-actions"></div><p class="hint" id="bot-note"></p></div>';
 
     function renderTune() {
       $("#tune-badge", page).className = "badge " + (tune.active ? "on" : "neutral");
@@ -870,8 +875,27 @@
           try { await Z.post("/system/tgproxy/stop"); tg = { active: false }; toast("Telegram proxy removed"); renderTg(); }
           catch (ex) { toast(ex.message, "err"); } }); };
     }
+    function renderBot() {
+      $("#bot-badge", page).className = "badge " + (bot.active ? "on" : "neutral");
+      $("#bot-badge", page).textContent = bot.active ? "Running" : "Off";
+      $("#bot-note", page).innerHTML = bot.configured
+        ? (bot.admins ? "" : '<span style="color:var(--warn)">No admin chat ID set — add it in Settings so you get payment alerts.</span>')
+        : '<span style="color:var(--warn)">No bot token set. Add it under Settings → Telegram, then start the bot.</span>';
+      $("#bot-actions", page).innerHTML = bot.active
+        ? '<button class="btn danger" id="bot-off">' + IC.power + " Stop bot</button>"
+        : '<button class="btn primary" id="bot-on"' + (bot.configured ? "" : " disabled") + ">" + IC.bolt + " Start bot</button>";
+      var on = $("#bot-on", page), off = $("#bot-off", page);
+      if (on) on.onclick = function (e) { busy(e.currentTarget, async function () {
+        try { var r = await Z.post("/system/bot/start"); if (r.ok === false) { toast(r.detail || "Failed", "err"); return; }
+          bot.active = true; toast("Telegram bot started"); renderBot();
+        } catch (ex) { toast(ex.message, "err"); } }); };
+      if (off) off.onclick = function (e) { busy(e.currentTarget, async function () {
+        try { await Z.post("/system/bot/stop"); bot.active = false; toast("Telegram bot stopped"); renderBot(); }
+        catch (ex) { toast(ex.message, "err"); } }); };
+    }
     renderTune();
     renderTg();
+    renderBot();
   };
 
   // -------- Clients --------

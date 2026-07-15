@@ -10,7 +10,7 @@ from ..config import settings
 from ..db import get_db
 from ..deps import require_admin
 from ..models import Client, Inbound, SSHAccount, User
-from ..core import protocols, services, system_stats, tuning, tgproxy
+from ..core import protocols, services, system_stats, tuning, tgproxy, botctl
 from ..schemas import ProtocolInfo
 
 router = APIRouter()
@@ -130,3 +130,21 @@ def tgproxy_start(_: User = Depends(require_admin)) -> dict:
 @router.post("/tgproxy/stop")
 def tgproxy_stop(_: User = Depends(require_admin)) -> dict:
     return tgproxy.stop()
+
+
+# --- Telegram bot (zeta-bot) --------------------------------------------------
+# The bot runs as its own service; it reads the token/admin from Settings.
+
+@router.get("/bot")
+def bot_status(_: User = Depends(require_admin)) -> dict:
+    return botctl.status()
+
+
+@router.post("/bot/start")
+def bot_start(_: User = Depends(require_admin)) -> dict:
+    return botctl.start()
+
+
+@router.post("/bot/stop")
+def bot_stop(_: User = Depends(require_admin)) -> dict:
+    return botctl.stop()
