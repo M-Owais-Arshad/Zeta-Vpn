@@ -1189,14 +1189,18 @@
   // on its own port, and via nginx on :80 at the WS path (the
   // "bug host"/CDN-friendly route tunnelling apps expect) — both are
   // real, simultaneously-working routes to the exact same backend.
+  // Each row picks its own host: the raw-SSH ports (22/149/143/445/8880) need
+  // the RAW IP — a Cloudflare-proxied domain silently drops them (CF only
+  // passes HTTP/HTTPS). Only the nginx :80/:443 WS routes ride the domain/CDN.
   var SSH_PORTS = [
-    { label: "OpenSSH", value: function (h) { return h + ":22"; } },
-    { label: "Dropbear (main)", value: function (h) { return h + ":149"; } },
-    { label: "Dropbear (alt)", value: function (h) { return h + ":143"; } },
-    { label: "SSH-over-SSL (stunnel)", value: function (h) { return h + ":445"; } },
-    { label: "SSH-over-WebSocket (direct)", value: function (h) { return h + ":8880"; } },
-    { label: "SSH-over-WebSocket (nginx :80, no TLS — CDN/bug-host)", value: function (h) { return h + ":80  (path: /zeta-ws, or any/blank)"; } },
-    { label: "SSH-over-WebSocket over TLS (nginx :443)", value: function (h) { return h + ":443  (path: /zeta-ws)"; } },
+    { label: "OpenSSH (direct — start here)", value: function (ip, dom) { return ip + ":22"; } },
+    { label: "Dropbear (main)", value: function (ip, dom) { return ip + ":149"; } },
+    { label: "Dropbear (alt)", value: function (ip, dom) { return ip + ":143"; } },
+    { label: "SSH-over-SSL (stunnel)", value: function (ip, dom) { return ip + ":445"; } },
+    { label: "SSH-over-WebSocket (direct)", value: function (ip, dom) { return ip + ":8880"; } },
+    { label: "UDPGW (UDP/gaming — set in the tunnel app)", value: function (ip, dom) { return "127.0.0.1:7300"; } },
+    { label: "SSH-WS via CDN (:80, needs a WS payload)", value: function (ip, dom) { return dom + ":80  (path: /zeta-ws, or any)"; } },
+    { label: "SSH-WS via CDN over TLS (:443)", value: function (ip, dom) { return dom + ":443  (path: /zeta-ws)"; } },
   ];
 
   function fmtExpiryPlain(isoDate) {
@@ -1209,34 +1213,50 @@
   // The ready-to-forward text block (like the "SGP/BLR SSH ACCOUNT" style
   // messages resellers send their users) — one button copies everything at
   // once instead of five separate fields.
-  function buildShareBlock(acc, pw, host, brand) {
+  function buildShareBlock(acc, pw, ip, dom, brand) {
     return [
       "⚡ " + (brand || "ZetaVPN") + " SSH ACCOUNT",
-      "Host/IP  : " + host,
+      "Host/IP  : " + ip,
       "Username : " + acc.username,
       "Password : " + (pw || "(unknown — recreate the account)"),
       "Expiry   : " + fmtExpiryPlain(acc.expiry_date),
       "Max login: " + acc.max_login,
-      "OpenSSH  : " + host + ":22",
-      "Dropbear : " + host + ":149, " + host + ":143",
-      "SSH-SSL  : " + host + ":445",
-      "SSH-WS   : " + host + ":8880 (direct)  |  " + host + ":80 (no TLS, path /zeta-ws or any)",
-      "SSH-WS/TLS: " + host + ":443 (path /zeta-ws)",
+      "",
+      "— Direct (use the IP — simplest, works on most networks) —",
+      "OpenSSH  : " + ip + ":22",
+      "Dropbear : " + ip + ":149, " + ip + ":143",
+      "SSH-SSL  : " + ip + ":445",
+      "SSH-WS   : " + ip + ":8880  (direct WebSocket)",
+      "UDPGW    : 127.0.0.1:7300  (set in the tunnel app for UDP/gaming)",
+      "",
+      "— Via CDN / domain (needs a WebSocket payload) —",
+      "SSH-WS   : " + dom + ":80",
+      "SSH-WS/TLS: " + dom + ":443  (TLS)",
+      "Payload  : GET /zeta-ws HTTP/1.1[crlf]Host: " + dom + "[crlf]Upgrade: websocket[crlf][crlf]",
+      "",
+      "Tip: raw-SSH ports (22/149/143/445/8880) need the IP — a Cloudflare",
+      "domain only passes :80/:443. Easiest = OpenSSH " + ip + ":22 (direct).",
     ].join("\n");
   }
 
   async function sshInfoModal(acc, password) {
-    var host = "your-server", brand = "ZetaVPN";
-    try { var s = await Z.get("/settings"); host = s.server_domain || s.server_address || host; brand = s.brand || brand; } catch (e) { /* best effort */ }
+    var ip = "your-server-ip", dom = "your-server-ip", brand = "ZetaVPN";
+    try {
+      var s = await Z.get("/settings");
+      // IP for raw-SSH ports (Cloudflare drops those); domain for the WS routes.
+      ip = s.server_address || s.server_domain || ip;
+      dom = s.server_domain || s.server_address || dom;
+      brand = s.brand || brand;
+    } catch (e) { /* best effort */ }
     // Real password: whatever was just typed at creation, else the stored one
     // the API now returns (single-owner dashboard — safe to show/copy anytime).
     var pw = password || acc.password || "";
     var portRows = SSH_PORTS.map(function (p) {
-      var v = p.value(host);
+      var v = p.value(ip, dom);
       return '<div class="field slim"><label>' + esc(p.label) + "</label>" +
         '<div class="linkbox"><input readonly value="' + esc(v) + '"><button class="btn sm" data-copy="' + esc(v) + '">' + IC.copy + " Copy</button></div></div>";
     }).join("");
-    var block = buildShareBlock(acc, pw, host, brand);
+    var block = buildShareBlock(acc, pw, ip, dom, brand);
     var pwField = pw
       ? '<div class="linkbox"><span class="input-wrap"><input id="ssh-pw" type="password" readonly value="' + esc(pw) + '">' +
           '<button type="button" class="in-btn icon-btn" data-eye data-tip="Show / hide" aria-label="Show password">' + IC.eye + "</button></span>" +
