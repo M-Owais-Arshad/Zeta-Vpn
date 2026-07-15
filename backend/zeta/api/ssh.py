@@ -27,7 +27,7 @@ def _to_out(acc: SSHAccount, online_counts: dict[str, int] | None = None) -> SSH
 @router.get("", response_model=list[SSHAccountOut])
 def list_accounts(db: Session = Depends(get_db), _: User = Depends(require_admin)) -> list[SSHAccountOut]:
     accounts = db.query(SSHAccount).order_by(SSHAccount.id).all()
-    counts = ssh_manager.online_counts()  # one `who` call for the whole list
+    counts = ssh_manager.online_counts()  # one `ps` call for the whole list
     return [_to_out(a, counts) for a in accounts]
 
 

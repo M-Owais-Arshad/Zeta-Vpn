@@ -127,18 +127,33 @@ def kill_sessions(username: str) -> services.CommandResult:
     )
 
 
-def online_counts() -> dict[str, int]:
-    """Active SSH session count per username (best-effort via one `who` call).
+# The per-connection session process each SSH transport leaves running AS the
+# authenticated account user. After auth, OpenSSH's unprivileged child (older
+# `sshd`, modern `sshd-session`) and Dropbear's child both drop to the account
+# user, so counting these by OWNER yields the live concurrent-session count for
+# every front-end: OpenSSH, Dropbear, stunnel→Dropbear and SSH-over-WS→OpenSSH.
+_SESSION_COMMS = {"sshd", "sshd-session", "dropbear"}
 
-    A single `who` invocation covers every account, instead of the caller
-    spawning one subprocess per account when listing them all.
+
+def online_counts() -> dict[str, int]:
+    """Active SSH session count per username (best-effort via one `ps` call).
+
+    Counts the per-connection session process each transport leaves running as
+    the account user. `who`/utmp is NOT usable here: ZetaVPN accounts are
+    tunnel-only (`/bin/false` shell, no PTY), so a live tunnel never records a
+    utmp entry and `who` always reported 0 online — the bug this replaces. The
+    root-owned listeners key to 'root', which no account matches, so they're
+    ignored. Username column widened (`user:64`) so it isn't truncated to 8.
     """
-    res = services.run(["who"], timeout=10)
+    res = services.run(["ps", "-eo", "user:64,comm", "--no-headers"], timeout=10)
     if not res.ok:
         return {}
     counts: dict[str, int] = {}
     for line in res.stdout.splitlines():
-        parts = line.split()
-        if parts:
-            counts[parts[0]] = counts.get(parts[0], 0) + 1
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        user, comm = parts[0], parts[1].strip()
+        if comm in _SESSION_COMMS:
+            counts[user] = counts.get(user, 0) + 1
     return counts
