@@ -341,10 +341,9 @@
     if (stale(ep)) return;
 
     page.innerHTML =
-      '<div class="grid cols-5" id="stat-grid">' +
+      '<div class="grid cols-4" id="stat-grid">' +
         statCard("cpu", "CPU", "", "", null) +
         statCard("mem", "Memory", "", "", null) +
-        statCard("swap", "Swap", "", "", null) +
         statCard("disk", "Disk", "", "", null) +
         statCard("up", "Uptime", "", "", undefined) +
       "</div>" +
@@ -393,10 +392,14 @@
     function updateStats(st) {
       var cpu = Math.round(st.cpu_percent);
       setStat("cpu", cpu + "%", st.cpu_count + " cores · load " + st.load_avg.join(" / "), cpu);
-      setStat("mem", st.mem.percent + "%", fmtBytes(st.mem.used) + " / " + fmtBytes(st.mem.total), st.mem.percent);
+      setStat("mem", st.mem.percent + "%", "", st.mem.percent);
+      var ram = fmtBytes(st.mem.used) + " / " + fmtBytes(st.mem.total);
       var sw = st.swap || {};
-      if (sw.total) setStat("swap", sw.percent + "%", fmtBytes(sw.used) + " / " + fmtBytes(sw.total), sw.percent);
-      else setStat("swap", "—", "No swap configured", 0);
+      var swLine = sw.total
+        ? "Swap: " + fmtBytes(sw.used) + " / " + fmtBytes(sw.total) + " · " + sw.percent + "%"
+        : "Swap: none";
+      var ssMem = $("#ss-mem");
+      if (ssMem) ssMem.innerHTML = esc(ram) + '<span class="swap-line">' + esc(swLine) + "</span>";
       setStat("disk", st.disk.percent + "%", fmtBytes(st.disk.used) + " / " + fmtBytes(st.disk.total), st.disk.percent);
       setStat("up", fmtUptime(st.uptime_seconds), st.brand + " v" + st.version, undefined);
       $("#ct-inb").textContent = st.counts.active_inbounds + " / " + st.counts.inbounds;
