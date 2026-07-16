@@ -82,6 +82,21 @@ class InboundBase(BaseModel):
     # sharing its clients/credentials. e.g. VLESS-WS on 80 + also on 8080/8443.
     extra_ports: list[int] = Field(default_factory=list)
 
+    @field_validator("tag")
+    @classmethod
+    def _clean_tag(cls, v: str) -> str:
+        # The tag is a core-config identifier and a stats key. Keep it to a safe
+        # printable set (no control chars, slashes, quotes or '@' — the last is
+        # reserved for the internal "<tag>@<port>" extra-listener convention) so
+        # it can never confuse the core config or the tag@port stats folding.
+        _reject_control_chars(v, "tag")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]*", v):
+            raise ValueError(
+                "tag may contain only letters, digits, space, dot, underscore and "
+                "hyphen, and must start with a letter or digit"
+            )
+        return v
+
 
 class InboundCreate(InboundBase):
     # When true and security == "reality" with no keys supplied, the panel

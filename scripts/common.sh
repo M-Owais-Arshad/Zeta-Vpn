@@ -100,8 +100,15 @@ server_ip() {
 }
 
 apt_install() {
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" >/dev/null 2>&1 \
-    || DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+  # Retry to ride out a transient network/mirror hiccup instead of aborting the
+  # whole install (the callers run under `set -e`) on a single 2-second blip.
+  local i
+  for i in 1 2 3; do
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" >/dev/null 2>&1 && return 0
+    [ "$i" -lt 3 ] && sleep 3
+  done
+  # Final attempt, verbose, so a genuine (non-transient) failure surfaces.
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
 }
 
 systemd_enable_now() {

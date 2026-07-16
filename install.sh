@@ -60,7 +60,9 @@ detect_os
 # --------------------------------------------------------------------------- #
 msg "Updating package index & installing base dependencies"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y >/dev/null 2>&1 || apt-get update -y
+# Retry the index update to ride out a transient mirror/network blip rather than
+# aborting the whole install (under set -e) on a single 2-second hiccup.
+for _i in 1 2 3; do apt-get update -y >/dev/null 2>&1 && break; [ "$_i" -lt 3 ] && sleep 3; done
 apt_install curl wget git unzip jq openssl ca-certificates \
             python3 python3-venv python3-pip vnstat >/dev/null 2>&1 || \
   apt_install curl wget git unzip jq openssl ca-certificates python3 python3-venv python3-pip

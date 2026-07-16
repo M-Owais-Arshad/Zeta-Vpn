@@ -27,6 +27,12 @@ def _set_sqlite_pragmas(dbapi_connection, _record):  # noqa: ANN001
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA synchronous=NORMAL")
+    # Wait up to 5s for a contended write lock instead of raising
+    # "database is locked" immediately (SQLite's default busy_timeout is 0).
+    # WAL already lets readers and a writer run concurrently; this covers the
+    # rarer writer-vs-writer overlap (two panel actions committing at once) so a
+    # concurrent burst degrades into a tiny wait, not an HTTP 500.
+    cursor.execute("PRAGMA busy_timeout=5000")
     cursor.close()
 
 

@@ -3,6 +3,12 @@ Description=ZetaVPN Xray-core
 Documentation=https://github.com/XTLS/Xray-core
 After=network-online.target zeta-panel.service
 Wants=network-online.target
+# Stop an unrecoverable crash-loop (e.g. a runtime bind failure `xray -test`
+# can't catch) from restarting every 3s forever and spamming the journal —
+# after 20 failures in 5 min systemd marks the unit failed. A transient failure
+# still auto-recovers; a `systemctl restart` or panel apply resets the counter.
+StartLimitIntervalSec=300
+StartLimitBurst=20
 
 [Service]
 Type=simple

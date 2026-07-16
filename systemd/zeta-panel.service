@@ -2,6 +2,10 @@
 Description=ZetaVPN control panel (FastAPI)
 After=network-online.target
 Wants=network-online.target
+# Cap a permanent crash-loop (see zeta-xray.service): failed after 20 restarts
+# in 5 min instead of looping forever; transient failures still auto-recover.
+StartLimitIntervalSec=300
+StartLimitBurst=20
 
 [Service]
 Type=simple
