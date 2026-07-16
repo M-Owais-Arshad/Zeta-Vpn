@@ -44,21 +44,28 @@ def _accumulate_once() -> None:
 
     db = SessionLocal()
     try:
+        # Batch the per-poll lookups into two IN() queries instead of one SELECT
+        # per active email + per inbound tag (the poll runs every few seconds
+        # regardless of whether a dashboard is open). Extra-port listeners are
+        # tagged "<tag>@<port>" (see core/xray.build_inbounds), so fold their
+        # traffic back into the base inbound; only strip a trailing "@<digits>"
+        # (a port) — real tags may legitimately contain '@'.
+        emails = set(xray_stats["users"]) | set(singbox_stats["users"])
+        clients = {
+            c.email: c for c in db.query(Client).filter(Client.email.in_(emails)).all()
+        } if emails else {}
+        tags = {_base_tag(t) for st in (xray_stats, singbox_stats) for t in st["inbounds"]}
+        inbounds = {
+            ib.tag: ib for ib in db.query(Inbound).filter(Inbound.tag.in_(tags)).all()
+        } if tags else {}
         for stats in (xray_stats, singbox_stats):
-            # Per-client usage.
             for email, rec in stats["users"].items():
-                for client in db.query(Client).filter(Client.email == email).all():
+                client = clients.get(email)
+                if client:
                     client.up = (client.up or 0) + rec["up"]
                     client.down = (client.down or 0) + rec["down"]
-            # Per-inbound usage. Extra-port listeners are tagged "<tag>@<port>"
-            # (see core/xray.build_inbounds), so fold their traffic back into
-            # the base inbound — otherwise every byte over an extra_port is
-            # dropped from the inbound/dashboard totals. Only strip a trailing
-            # "@<digits>" (a port); real tags may legitimately contain '@'.
             for tag, rec in stats["inbounds"].items():
-                base, sep, suffix = tag.rpartition("@")
-                lookup = base if sep and suffix.isdigit() else tag
-                ib = db.query(Inbound).filter(Inbound.tag == lookup).first()
+                ib = inbounds.get(_base_tag(tag))
                 if ib:
                     ib.up = (ib.up or 0) + rec["up"]
                     ib.down = (ib.down or 0) + rec["down"]
@@ -78,10 +85,38 @@ def _accumulate_once() -> None:
         # clients — expiry/quota are evaluated against data already in the
         # DB, not against this poll's deltas).
         _enforce_limits(db)
+        _enforce_ssh_logins(db)
     finally:
         db.close()
 
     _maybe_record_snapshot()
+
+
+def _base_tag(tag: str) -> str:
+    """Strip a trailing "@<port>" extra-listener suffix to the base inbound tag."""
+    base, sep, suffix = tag.rpartition("@")
+    return base if sep and suffix.isdigit() else tag
+
+
+def _enforce_ssh_logins(db) -> None:  # noqa: ANN001
+    """Enforce SSHAccount.max_login by terminating the NEWEST excess tunnel
+    sessions (the oldest max_login sessions are kept, so a legitimate user is
+    never thrashed — only the over-limit devices keep getting kicked). Reuses
+    the same per-user session count already trusted for the online badge."""
+    from .core import ssh_manager
+    from .models import SSHAccount
+
+    accounts = (
+        db.query(SSHAccount)
+        .filter(SSHAccount.max_login > 0, SSHAccount.enabled.is_(True))
+        .all()
+    )
+    if not accounts:
+        return
+    counts = ssh_manager.online_counts()
+    for acc in accounts:
+        if counts.get(acc.username, 0) > acc.max_login:
+            ssh_manager.enforce_max_login(acc.username, acc.max_login)
 
 
 def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001

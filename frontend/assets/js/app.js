@@ -507,6 +507,9 @@
   // -------- Inbounds --------
   VIEWS.inbounds = async function (page, route, ep) {
     setTitle("Inbounds", "Proxy listeners across Xray & sing-box");
+    // Consume the one-shot "open Add" flag up front so a failed/stale fetch
+    // below can't leave it set and pop the modal on a later successful render.
+    var autoAdd = state.autoOpen === "inbound"; state.autoOpen = null;
     var list;
     try { list = await Z.get("/inbounds"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
     if (stale(ep)) return;
@@ -548,7 +551,7 @@
     function openAdd() { inboundModal(null); }
     $("#add-inbound").onclick = openAdd;
     var ea = $("#empty-add"); if (ea) ea.onclick = openAdd;
-    if (state.autoOpen === "inbound") { state.autoOpen = null; openAdd(); }
+    if (autoAdd) openAdd();
     var q = $("#q-inb"); if (q) wireSearch(q, page.querySelector("tbody"));
 
     page.querySelectorAll("[data-clients]").forEach(function (b) {
@@ -1019,6 +1022,11 @@
   // (which focuses+expands just that block). No separate nested view.
   VIEWS.clients = async function (page, route, ep) {
     setTitle("Clients", "Proxy users, grouped by inbound");
+    // Consume the focus target BEFORE the awaits so a failed/stale load can't
+    // leak it to a later navigation (which would then collapse every other
+    // group, making clients look missing).
+    var focus = route.focusIbId || state.focusInbound || null;
+    state.focusInbound = null;
     var ibs;
     try { ibs = await Z.get("/inbounds"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
     var lists = await Promise.all(ibs.map(function (ib) {
@@ -1026,8 +1034,6 @@
     }));
     if (stale(ep)) return;
 
-    var focus = route.focusIbId || state.focusInbound || null;
-    state.focusInbound = null;
     var allItems = [];
     var total = 0;
 
@@ -1081,7 +1087,7 @@
           tr.style.display = hit ? "" : "none";
           if (hit) any = true;
         });
-        if (query) d.open = any; // auto-expand blocks that contain a match
+        d.open = query ? any : true; // expand matches while searching; restore all when cleared
       });
     };
     wireClientActions(page, allItems, reload);

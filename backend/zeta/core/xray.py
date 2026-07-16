@@ -48,6 +48,20 @@ def gen_reality_keypair() -> dict:
     return {"privateKey": "", "publicKey": ""}
 
 
+def derive_reality_public_key(private_key: str) -> str:
+    """Derive the REALITY X25519 public key from a supplied private key via
+    `xray x25519 -i <priv>`, so a keypair reused/migrated with only the private
+    key still emits a valid `pbk=` in client links. Returns "" if unavailable."""
+    if not private_key:
+        return ""
+    res = services.run([str(settings.xray_bin), "x25519", "-i", private_key], timeout=10)
+    if res.ok and res.stdout:
+        for line in res.stdout.splitlines():
+            if "public" in line.lower():
+                return line.split(":", 1)[-1].strip()
+    return ""
+
+
 def gen_short_id(length: int = 8) -> str:
     return os.urandom(length // 2).hex()
 

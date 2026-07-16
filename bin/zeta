@@ -51,7 +51,19 @@ cmd_update() {
     warn "Not a git checkout — reinstalling deps only."
   fi
   "${ZETA_HOME}/venv/bin/pip" install --quiet -r "${ZETA_HOME}/backend/requirements.txt"
-  install -m 0644 "${ZETA_HOME}/systemd/"zeta-*.service /etc/systemd/system/ 2>/dev/null || true
+  # Rewrite the units the same way install.sh does — the repo units hardcode
+  # /opt/zetavpn and --listen :8880, so installing them verbatim would undo a
+  # custom ZETA_HOME / WS_PORT deployment. Source the persisted port from .env.
+  local ws_port=8880
+  [ -f "${ZETA_HOME}/.env" ] && ws_port="$(sed -n 's/^ZETA_WS_PORT=//p' "${ZETA_HOME}/.env" | tail -1)"
+  ws_port="${ws_port:-8880}"
+  local tmp_units; tmp_units="$(mktemp -d)"
+  for f in "${ZETA_HOME}/systemd/"zeta-*.service; do
+    sed -e "s#/opt/zetavpn#${ZETA_HOME}#g" -e "s#--listen 0.0.0.0:8880#--listen 0.0.0.0:${ws_port}#" \
+      "$f" > "${tmp_units}/$(basename "$f")"
+  done
+  install -m 0644 "${tmp_units}/"zeta-*.service /etc/systemd/system/ 2>/dev/null || true
+  rm -rf "$tmp_units"
   systemctl daemon-reload
   cmd_restart all
   ok "Update complete"

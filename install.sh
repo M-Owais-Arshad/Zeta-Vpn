@@ -136,6 +136,7 @@ ZETA_SERVER_ADDRESS=${SERVER_IP}
 ZETA_SERVER_DOMAIN=${ZETA_DOMAIN:-}
 ZETA_ADMIN_USERNAME=${ADMIN_USER}
 ZETA_ADMIN_PASSWORD=${ADMIN_PASS}
+ZETA_WS_PORT=${WS_PORT}
 ENV
   chmod 600 "$ZETA_ENV"
   ok "Configuration written to ${ZETA_ENV}"
@@ -144,6 +145,12 @@ else
 fi
 # shellcheck disable=SC1091
 set -a; . "$ZETA_ENV"; set +a
+# Re-runs don't re-export the operator's env vars, but the installer's own
+# consumers read ZETA_DOMAIN / WS_PORT — restore them from what we persisted so
+# a plain `./install.sh` re-run keeps the HTTPS vhost and the custom WS port
+# instead of silently reverting to plain-HTTP / :8880.
+ZETA_DOMAIN="${ZETA_DOMAIN:-${ZETA_SERVER_DOMAIN:-}}"
+WS_PORT="${WS_PORT:-${ZETA_WS_PORT:-8880}}"
 
 # --------------------------------------------------------------------------- #
 # 5. Install cores + system components
@@ -210,9 +217,45 @@ install -m 0755 "${ZETA_HOME}/bin/zeta" /usr/local/bin/zeta
 systemctl daemon-reload
 systemctl enable --now zeta-panel.service
 systemctl enable --now zeta-xray.service
-systemctl enable zeta-singbox.service >/dev/null 2>&1 || true
+# Do NOT enable sing-box at boot: it would start a second Go core (~35MB RSS)
+# on every reboot even on Xray-only / SSH-only boxes, serving nothing. The
+# panel enables + starts it on demand when the first Hysteria2/TUIC inbound is
+# created and disables it again when the last one is removed (core/singbox.apply).
+systemctl disable zeta-singbox.service >/dev/null 2>&1 || true
 systemctl enable --now zeta-ws.service
 ok "Services installed and started"
+
+# --- Low-memory hardening (<=768MB) ---------------------------------------- #
+# Cap the always-on heavy units and shrink the WS proxy via systemd drop-ins,
+# and add a swapfile, so the stack survives on a 256-512MB box. Drop-ins mean
+# larger boxes are completely unaffected (no cap is written there).
+MEM_KB="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+if [ "${MEM_KB:-0}" -gt 0 ] && [ "$MEM_KB" -le 786432 ]; then
+  msg "Low-memory box (~$((MEM_KB/1024))MB) — applying lean caps + swap"
+  _lowmem_drop() {  # <unit> <extra [Service] lines>
+    mkdir -p "/etc/systemd/system/$1.d"
+    printf '[Service]\n%s\n' "$2" > "/etc/systemd/system/$1.d/lowmem.conf"
+  }
+  # MemoryHigh is a SOFT cap (throttle reclaim, never OOM-kill); MemoryMax hard.
+  _lowmem_drop zeta-panel.service "MemoryHigh=150M"$'\n'"MemoryMax=190M"
+  _lowmem_drop zeta-xray.service "MemoryHigh=96M"
+  _lowmem_drop zeta-singbox.service "MemoryHigh=96M"
+  # ws-proxy: bound concurrent tunnels so pipe buffers can't blow the RAM budget
+  # (2000x2x64KB = 250MB+ at the code default). Reset ExecStart before overriding.
+  _lowmem_drop zeta-ws.service "MemoryHigh=48M"$'\n'"ExecStart="$'\n'"ExecStart=/usr/bin/python3 ${ZETA_HOME}/proxies/ws-proxy.py --listen 0.0.0.0:${WS_PORT} --backend 127.0.0.1:22 --max-connections 300 --max-per-ip 10"
+  systemctl daemon-reload
+  systemctl restart zeta-ws.service 2>/dev/null || true
+  # Swapfile — the OOM valve vm.swappiness=10 (zeta-tuning) already assumes.
+  if [ ! -e /swapfile ] && ! swapon --show=NAME --noheadings 2>/dev/null | grep -q .; then
+    fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 2>/dev/null || true
+    if [ -e /swapfile ]; then
+      chmod 600 /swapfile; mkswap /swapfile >/dev/null 2>&1 || true
+      swapon /swapfile 2>/dev/null || true
+      grep -q '^/swapfile ' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
+  fi
+  ok "Low-memory caps + swap applied"
+fi
 
 # Install the cron helper that expires SSH accounts.
 ( crontab -l 2>/dev/null | grep -v 'zeta expire-check'; \

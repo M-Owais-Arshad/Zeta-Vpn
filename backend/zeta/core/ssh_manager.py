@@ -76,9 +76,16 @@ def set_password(username: str, password: str) -> services.CommandResult:
     try:
         import subprocess
 
+        # Via the wrapper the username is passed as an argv the wrapper itself
+        # validates (incl. the reserved-name/uid guard) and only the password
+        # goes on stdin; the direct/root path keeps chpasswd's "user:password"
+        # stdin format. Either way a control char can't inject a second account.
+        needs_sudo = services._needs_sudo()
+        argv = services.privileged_argv(["chpasswd", username], ["chpasswd"])
+        stdin = f"{password}\n" if needs_sudo else f"{username}:{password}\n"
         proc = subprocess.run(
-            services.privileged_argv(["chpasswd"], ["chpasswd"]),
-            input=f"{username}:{password}\n",
+            argv,
+            input=stdin,
             text=True,
             capture_output=True,
             timeout=20,
@@ -209,3 +216,32 @@ def online_sessions() -> dict[str, list[str]]:
                     ips.append(ip)
                 break
     return out
+
+
+def enforce_max_login(username: str, max_login: int) -> int:
+    """Terminate the account's NEWEST sessions beyond ``max_login`` (keeping the
+    oldest), returning how many were killed. This keeps a legitimate user's
+    established sessions and only kicks the over-limit extras, so there's no
+    thrash. Best-effort; the privileged ``killpid`` verb only kills uid>=1000
+    pids, so it can never touch a system/root process."""
+    if max_login <= 0:
+        return 0
+    res = services.run(["ps", "-o", "pid=,etimes=,comm=", "-u", username], timeout=10)
+    if not res.ok:
+        return 0
+    sessions: list[tuple[int, str]] = []  # (elapsed_seconds, pid)
+    for line in res.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[2].strip() in _SESSION_COMMS:
+            try:
+                sessions.append((int(parts[1]), parts[0]))
+            except ValueError:
+                continue
+    if len(sessions) <= max_login:
+        return 0
+    sessions.sort(key=lambda s: s[0], reverse=True)  # oldest (largest etimes) first
+    killed = 0
+    for _elapsed, pid in sessions[max_login:]:  # the newest excess sessions
+        if services.run_privileged(["killpid", pid], ["kill", "-KILL", pid], timeout=10).ok:
+            killed += 1
+    return killed

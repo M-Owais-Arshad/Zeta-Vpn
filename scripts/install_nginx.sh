@@ -179,5 +179,16 @@ ${ROOT_LOCATION_HTTP}
 CONF
 fi
 
-nginx -t && systemctl enable nginx >/dev/null 2>&1 && systemctl restart nginx
-ok "nginx configured (WS path: ${WS_PATH})"
+# Don't chain `nginx -t && ... && restart` — under `set -e` a failing test is a
+# non-final && element and is exempt from errexit, so a broken config would
+# print success while nginx never (re)starts and the panel is unreachable.
+if nginx -t; then
+  systemctl enable nginx >/dev/null 2>&1 || true
+  if systemctl restart nginx; then
+    ok "nginx configured (WS path: ${WS_PATH})"
+  else
+    warn "nginx restart failed — panel may be unreachable"
+  fi
+else
+  warn "nginx config test failed — NOT restarting nginx; panel may be unreachable"
+fi

@@ -68,7 +68,8 @@ def create_account(
     db.add(acc)
     db.commit()
     db.refresh(acc)
-    return _to_out(acc)
+    # A just-created system user has no sessions — skip the ps/ss online scans.
+    return _to_out(acc, {}, {})
 
 
 @router.post("/{account_id}/lock", response_model=SSHAccountOut)
@@ -83,7 +84,8 @@ def lock_account(
     acc.enabled = False
     db.commit()
     db.refresh(acc)
-    return _to_out(acc)
+    # Sessions were just killed — no live IPs to scan for.
+    return _to_out(acc, {}, {})
 
 
 @router.post("/{account_id}/unlock", response_model=SSHAccountOut)

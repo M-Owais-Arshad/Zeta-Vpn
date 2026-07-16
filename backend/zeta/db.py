@@ -65,6 +65,62 @@ def _ensure_columns() -> None:
             for name, ddl in cols:
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+    _migrate_inbound_port_key(insp)
+
+
+def _migrate_inbound_port_key(insp) -> None:  # noqa: ANN001
+    """The port redesign added inbounds.port_key (unique) + internal_port, which
+    a plain ALTER can't add with NOT NULL/UNIQUE on a populated SQLite table —
+    so add them nullable, backfill port_key from existing rows, then create the
+    unique index (skipping it if the old non-unique `port` produced duplicates).
+    Idempotent: a fresh install already has both columns (create_all made them),
+    so this whole function is a no-op there. Best-effort: never crash init_db."""
+    import json as _json
+    import logging
+
+    from sqlalchemy import text
+
+    log = logging.getLogger("zeta.db")
+    if not insp.has_table("inbounds"):
+        return
+    existing = {c["name"] for c in insp.get_columns("inbounds")}
+    if "port_key" in existing and "internal_port" in existing:
+        return  # fresh/already-migrated schema
+    from .core import protocols  # local import avoids an import cycle at load
+
+    try:
+        with engine.begin() as conn:
+            if "internal_port" not in existing:
+                conn.execute(text("ALTER TABLE inbounds ADD COLUMN internal_port INTEGER"))
+            if "port_key" not in existing:
+                conn.execute(text("ALTER TABLE inbounds ADD COLUMN port_key VARCHAR(80)"))
+                rows = conn.execute(
+                    text("SELECT id, port, protocol, network, stream_settings FROM inbounds")
+                ).fetchall()
+                seen: set[str] = set()
+                dupes = False
+                for rid, port, proto, network, stream in rows:
+                    try:
+                        ss = stream if isinstance(stream, dict) else _json.loads(stream or "{}")
+                    except (ValueError, TypeError):
+                        ss = {}
+                    pk = protocols.compute_port_key(port, proto, network, ss)
+                    if pk in seen:
+                        dupes = True
+                    seen.add(pk)
+                    conn.execute(
+                        text("UPDATE inbounds SET port_key = :pk WHERE id = :id"),
+                        {"pk": pk, "id": rid},
+                    )
+                if dupes:
+                    log.warning("port_key backfill found duplicates; skipping UNIQUE index")
+                else:
+                    conn.execute(
+                        text("CREATE UNIQUE INDEX IF NOT EXISTS ix_inbounds_port_key "
+                             "ON inbounds(port_key)")
+                    )
+    except Exception as exc:  # noqa: BLE001
+        log.error("inbounds port_key migration failed: %s", exc)
 
 
 def init_db() -> None:

@@ -31,16 +31,28 @@ def _listening_ports(family: str) -> set[int]:
     sandbox where /proc/net isn't available, e.g. non-Linux dev boxes.
     """
     ports: set[int] = set()
+    is_tcp = family == "tcp"
     for path in _FAMILY_PATHS.get(family, ()):
         try:
             with open(path, encoding="ascii", errors="ignore") as fh:
                 next(fh, None)  # header line
                 for line in fh:
                     fields = line.split()
-                    if len(fields) < 2:
+                    if len(fields) < 4:
                         continue
-                    local = fields[1]  # "0100007F:0050"
+                    local, rem, st = fields[1], fields[2], fields[3]  # "IP:PORT", "IP:PORT", state
                     if ":" not in local:
+                        continue
+                    # Count only real binds, not the ephemeral local port of an
+                    # ESTABLISHED/outbound socket (e.g. the panel's own httpx to
+                    # the Clash API, acme.sh, apt) — otherwise a legitimately-free
+                    # inbound port gets a spurious 409. TCP: state must be LISTEN
+                    # (0A). UDP has no LISTEN state, so require an unconnected
+                    # (server-bound) socket: remote endpoint all-zeros.
+                    if is_tcp:
+                        if st != "0A":
+                            continue
+                    elif not rem.endswith(":0000"):
                         continue
                     try:
                         ports.add(int(local.rsplit(":", 1)[1], 16))

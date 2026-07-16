@@ -81,8 +81,13 @@ def create_client(
     enabled: bool = True,
     sub_id: str = "",
     comment: str = "",
+    _commit: bool = True,
 ) -> Client:
-    """Create a client under ``ib`` exactly as the dashboard would."""
+    """Create a client under ``ib`` exactly as the dashboard would.
+
+    With ``_commit=False`` the row is added + flushed but the core reload and
+    commit are left to the caller, so a delete+create replacement can run in one
+    atomic transaction (see bot/provision.provision_for)."""
     spec = protocols.spec(ib.protocol)
 
     if db.query(Client).filter(Client.email == email).first():
@@ -129,17 +134,19 @@ def create_client(
     )
     db.add(client)
     flush_or_conflict(db, email)
-    apply_core(db, ib)
-    db.commit()
-    db.refresh(client)
+    if _commit:
+        apply_core(db, ib)
+        db.commit()
+        db.refresh(client)
     return client
 
 
-def delete_client(db: Session, ib: Inbound, client: Client) -> None:
+def delete_client(db: Session, ib: Inbound, client: Client, _commit: bool = True) -> None:
     db.delete(client)
     db.flush()
-    apply_core(db, ib)
-    db.commit()
+    if _commit:
+        apply_core(db, ib)
+        db.commit()
 
 
 def create_ssh_account(

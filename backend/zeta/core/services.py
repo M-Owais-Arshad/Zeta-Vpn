@@ -111,3 +111,20 @@ def status(unit: str) -> dict:
     res = run(["systemctl", "is-active", unit], timeout=10)
     active = res.stdout.strip() or res.stderr.strip() or "unknown"
     return {"unit": unit, "active": active, "running": active == "active"}
+
+
+def status_many(units: list[str]) -> dict[str, str]:
+    """Active-state of several units in ONE `systemctl is-active` call, instead
+    of a fork/exec per unit. systemctl prints one state per line in argument
+    order (and exits non-zero if any unit isn't active, but run() still captures
+    stdout); a missing/short line maps to 'unknown'."""
+    if not units:
+        return {}
+    if not _systemctl_available():
+        return {u: "unknown" for u in units}
+    res = run(["systemctl", "is-active", *units], timeout=15)
+    lines = res.stdout.splitlines()
+    return {
+        u: (lines[i].strip() if i < len(lines) and lines[i].strip() else "unknown")
+        for i, u in enumerate(units)
+    }

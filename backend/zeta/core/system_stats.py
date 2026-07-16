@@ -79,11 +79,15 @@ def services_health() -> list[dict]:
         ("sing-box", settings.singbox_service),
         ("SSH", "ssh"),
         ("Dropbear", "dropbear"),
+        ("SSL", "stunnel4"),
         ("Nginx", "nginx"),
         ("WS Proxy", "zeta-ws"),
     ]
-    out = []
-    for label, unit in units:
-        st = services.status(unit)
-        out.append({"label": label, "unit": unit, "running": st["running"], "state": st["active"]})
-    return out
+    # One batched `systemctl is-active` instead of 8 sequential fork/execs on
+    # every ~8s dashboard poll.
+    states = services.status_many([u for _, u in units])
+    return [
+        {"label": label, "unit": unit,
+         "running": states.get(unit) == "active", "state": states.get(unit, "unknown")}
+        for label, unit in units
+    ]

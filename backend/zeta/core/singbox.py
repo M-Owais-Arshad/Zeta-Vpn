@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import tempfile
-
+import threading
 import time
 
 import httpx
@@ -31,7 +31,10 @@ _last_seen: dict[str, tuple[int, int]] = {}
 # user -> {ip: last_seen_epoch_seconds} — mirrors core/access_log.py's
 # tracker so the "online + IPs" UI feature works the same way for
 # sing-box-served clients (Hysteria2/TUIC) as it does for Xray's.
+# Mutated by the poller thread (query_stats) and read by request threads
+# (client_activity); guarded by _lock so the reader can't iterate mid-mutation.
 _recent_ips: dict[str, dict[str, float]] = {}
+_lock = threading.Lock()
 
 
 def _tls_block(inbound: Inbound, alpn_default: list[str]) -> dict:
@@ -168,9 +171,12 @@ def apply(db: Session) -> services.CommandResult:
     """
     config = generate_config(db)
     if not has_singbox_inbounds(db):
-        # Nothing to serve; write the (empty) config and stop the core rather
-        # than run an empty listener set.
+        # Nothing to serve; write the (empty) config, then stop AND disable the
+        # core so it doesn't idle-waste ~35MB RSS on every reboot of an
+        # Xray-only / SSH-only box (the install leaves it disabled; the panel
+        # owns its lifecycle from here).
         write_config(config)
+        services.systemctl("disable", settings.singbox_service)
         return services.systemctl("stop", settings.singbox_service)
     if _binary_available():
         check = validate_config(config)
@@ -178,6 +184,9 @@ def apply(db: Session) -> services.CommandResult:
             detail = (check.stderr or check.stdout or "sing-box rejected the generated config").strip()
             return services.CommandResult(False, check.code, check.stdout, detail)
     write_config(config)
+    # Enable so a legitimately-configured sing-box survives reboots (the install
+    # ships it disabled to avoid the empty-config idle waste).
+    services.systemctl("enable", settings.singbox_service)
     return services.restart(settings.singbox_service)
 
 
@@ -251,9 +260,21 @@ def query_stats(reset: bool = True) -> dict:
             rec = out["users"].setdefault(user, {"up": 0, "down": 0})
             rec["up"] += delta_up
             rec["down"] += delta_down
+            # Fold the same delta into the per-inbound bucket so Hysteria2/TUIC
+            # inbounds record traffic. xray.query_stats populates out["inbounds"];
+            # without this the QUIC inbounds AND the dashboard proxy_traffic total
+            # (SUM(Inbound.up/down)) permanently read 0. The Clash API carries the
+            # inbound tag in connection metadata; "<tag>@<port>" folding in
+            # tasks.py still applies.
+            inbound_tag = metadata.get("inbound") or metadata.get("inboundTag")
+            if inbound_tag:
+                irec = out["inbounds"].setdefault(inbound_tag, {"up": 0, "down": 0})
+                irec["up"] += delta_up
+                irec["down"] += delta_down
         source_ip = metadata.get("sourceIP")
         if source_ip:
-            _recent_ips.setdefault(user, {})[source_ip] = now
+            with _lock:
+                _recent_ips.setdefault(user, {})[source_ip] = now
 
     if reset:
         # Drop bookkeeping for connections that have since closed so the dict
@@ -263,12 +284,13 @@ def query_stats(reset: bool = True) -> dict:
             if conn_id not in seen_ids:
                 del _last_seen[conn_id]
         window_start = now - settings.ip_limit_window_seconds
-        for user in list(_recent_ips):
-            ips = _recent_ips[user]
-            for ip in [ip for ip, last_seen in ips.items() if last_seen < window_start]:
-                del ips[ip]
-            if not ips:
-                del _recent_ips[user]
+        with _lock:
+            for user in list(_recent_ips):
+                ips = _recent_ips[user]
+                for ip in [ip for ip, last_seen in ips.items() if last_seen < window_start]:
+                    del ips[ip]
+                if not ips:
+                    del _recent_ips[user]
 
     return out
 
@@ -287,8 +309,10 @@ def client_activity() -> dict[str, list[str]]:
     now = time.time()
     window = max(settings.online_window_seconds, settings.stats_poll_seconds * 2)
     window_start = now - window
+    with _lock:
+        snapshot = {u: dict(ips) for u, ips in _recent_ips.items()}
     return {
         user: sorted(ip for ip, last_seen in ips.items() if last_seen >= window_start)
-        for user, ips in _recent_ips.items()
+        for user, ips in snapshot.items()
         if any(last_seen >= window_start for last_seen in ips.values())
     }

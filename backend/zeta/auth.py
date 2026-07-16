@@ -124,8 +124,12 @@ class LoginGuard:
         one). Called periodically from tasks.py's existing poll loop.
         """
         now = time.monotonic()
+        # Snapshot with list(): this runs on the event-loop thread while login
+        # workers (anyio threadpool) mutate _buckets via setdefault/pop, so
+        # iterating the live dict can raise "dict changed size during iteration"
+        # — exactly under the attack burst this sweep exists to bound.
         stale = [
-            k for k, b in self._buckets.items()
+            k for k, b in list(self._buckets.items())
             if b.locked_until <= now and (now - b.last_activity) > max_age_seconds
         ]
         for k in stale:

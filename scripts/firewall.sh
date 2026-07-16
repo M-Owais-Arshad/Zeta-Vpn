@@ -19,7 +19,15 @@ msg "Configuring firewall + fail2ban"
 apt_install fail2ban || warn "fail2ban install skipped"
 
 if command -v ufw >/dev/null 2>&1 || apt_install ufw; then
-  ufw --force reset >/dev/null 2>&1 || true
+  # Only wipe the ruleset on the FIRST run. A re-run (install.sh is a supported
+  # re-entry point) must NOT reset, or it deletes the custom-port allows the
+  # panel added for inbounds at CRUD time — silently making those inbounds
+  # unreachable. `ufw default`/`allow` below are already idempotent no-ops.
+  _ufw_marker=/var/lib/zetavpn/.ufw-initialized
+  if [ ! -f "$_ufw_marker" ]; then
+    ufw --force reset >/dev/null 2>&1 || true
+    mkdir -p "$(dirname "$_ufw_marker")" && : > "$_ufw_marker"
+  fi
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
   # Core management / web. The panel itself binds 127.0.0.1 (nginx always

@@ -53,28 +53,36 @@ def provision_for(telegram_id: int, username: str, *, days: int, gb: float,
         u = db.get(BotUser, telegram_id) or BotUser(telegram_id=telegram_id, username=username or "")
         db.add(u)
 
-        # One client per bot user: drop the old one first so quotas/links reset.
+        # One client per bot user: replace the old one so quotas/links reset —
+        # but do the delete + create + core reload + commit as ONE atomic
+        # transaction, so if the create is rejected the old (paid) config is
+        # rolled back into place instead of being permanently lost.
+        old_ib = None
         if u.client_email:
             old = db.query(Client).filter(Client.email == u.client_email).first()
             if old:
-                try:
-                    provisioning.delete_client(db, db.get(Inbound, old.inbound_id), old)
-                except ProvisionError:
-                    pass
+                old_ib = db.get(Inbound, old.inbound_id)
+                provisioning.delete_client(db, old_ib, old, _commit=False)
 
         email = f"tg{telegram_id}"
         try:
             client = provisioning.create_client(
                 db, ib, email=email, total_gb=gb, expiry_days=days, limit_ip=limit_ip,
-                comment=f"bot:{username or telegram_id}",
+                comment=f"bot:{username or telegram_id}", _commit=False,
             )
+            u.client_email = email
+            u.plan = plan
+            u.status = "active"
+            # Reload the affected core(s) once; apply_core rolls the whole
+            # transaction back (delete+create) if the core rejects the config.
+            provisioning.apply_core(db, ib)
+            if old_ib is not None and old_ib.core != ib.core:
+                provisioning.apply_core(db, old_ib)
+            db.commit()
         except ProvisionError as exc:
+            db.rollback()
             return {"ok": False, "error": exc.detail}
-
-        u.client_email = email
-        u.plan = plan
-        u.status = "active"
-        db.commit()
+        db.refresh(client)
         return {"ok": True, "link": links.client_link(ib, client), "email": email}
 
 

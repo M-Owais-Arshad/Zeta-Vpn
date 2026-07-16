@@ -155,6 +155,12 @@ def _seed_reality(stream: dict) -> dict:
         keys = xray.gen_reality_keypair()
         r["privateKey"] = keys["privateKey"]
         r["publicKey"] = keys["publicKey"]
+    elif not r.get("publicKey"):
+        # A private key was supplied without its public key (e.g. keys migrated
+        # from another server). xray only needs the private key to run, so the
+        # core would accept it, but every client link would carry an empty pbk=
+        # and silently fail the REALITY handshake — derive the public key.
+        r["publicKey"] = xray.derive_reality_public_key(r["privateKey"])
     if not r.get("shortIds"):
         r["shortIds"] = [xray.gen_short_id()]
     # www.microsoft.com does NOT complete the REALITY handshake (its TLS/CDN

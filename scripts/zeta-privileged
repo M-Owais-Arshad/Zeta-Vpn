@@ -14,11 +14,23 @@ set -euo pipefail
 
 USERNAME_RE='^[a-z_][a-z0-9_-]{2,31}$'
 DATE_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+# Reserved/system accounts the panel must NEVER touch — mirrors the _RESERVED
+# set in backend/zeta/core/ssh_manager.py. This wrapper is the REAL privilege
+# boundary: the Python check runs inside the unprivileged panel and is bypassed
+# by invoking this script directly (the exact contained-compromise case the
+# privilege separation defends), so the denylist must be enforced HERE too —
+# otherwise `root` matches USERNAME_RE and userdel/usermod/chage/pkill/chpasswd
+# would all accept it.
+RESERVED='root admin administrator daemon bin sys sync games man lp mail news uucp proxy www-data backup list nobody systemd-network sshd zeta zetavpn ubuntu debian'
 
 die() { echo "zeta-privileged: $*" >&2; exit 1; }
 
 valid_username() {
   [[ "$1" =~ $USERNAME_RE ]] || die "invalid username: $1"
+  local r
+  for r in $RESERVED; do
+    [ "$1" = "$r" ] && die "reserved username: $1"
+  done
 }
 
 valid_date_or_none() {
@@ -76,11 +88,19 @@ case "$action" in
     ;;
 
   chpasswd)
-    # Reads "username:password\n" on stdin. The caller (core/ssh_manager.py)
-    # already rejects control characters in both fields before we ever get
-    # here, so there's nothing further to validate on our side — we're just
-    # the sudo chokepoint.
-    exec chpasswd
+    # zeta-privileged chpasswd <username>   (the password is read as ONE line
+    # from stdin). The WRAPPER owns the target-user constraint so no stdin trick
+    # can retarget root or another account — we read a single line and compose
+    # "<username>:<password>" ourselves, ignoring any injected second line.
+    # Refuse system accounts: valid_username's regex still matches names like
+    # 'root', so also require uid >= 1000 (the panel only sets tunnel-account
+    # passwords). Note: no `exec`, since a pipe is needed.
+    username="${1:-}"; [ -n "$username" ] || die "username required"
+    valid_username "$username"
+    uid="$(id -u -- "$username" 2>/dev/null)" || die "no such user: $username"
+    [ "$uid" -ge 1000 ] || die "refusing system account: $username"
+    IFS= read -r password || true
+    printf '%s:%s\n' "$username" "$password" | chpasswd
     ;;
 
   systemctl)
@@ -130,6 +150,18 @@ case "$action" in
     [[ "$port" =~ ^[0-9]{1,5}$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || die "invalid port: $port"
     case "$proto" in tcp|udp) ;; *) die "invalid proto: $proto" ;; esac
     exec ufw --force delete allow "${port}/${proto}"
+    ;;
+
+  killpid)
+    # zeta-privileged killpid <pid> — terminate a single tunnel-session process
+    # to enforce SSHAccount.max_login. Kills ONLY a pid owned by a non-system
+    # user (uid >= 1000), so it can never be turned into a box-wide kill
+    # primitive against root/system processes.
+    pid="${1:-}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || die "invalid pid: $pid"
+    owner_uid="$(stat -c %u "/proc/$pid" 2>/dev/null)" || die "no such pid: $pid"
+    [ "$owner_uid" -ge 1000 ] || die "refusing to kill system-owned pid: $pid"
+    exec kill -KILL "$pid"
     ;;
 
   ssh-conns)

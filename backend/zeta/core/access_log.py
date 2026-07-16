@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 
 from ..config import settings
@@ -26,8 +27,16 @@ _LINE_RE = re.compile(r"from \[?(?P<ip>[0-9a-fA-F.:]+)\]?:\d+ accepted .*email:\
 # Tail position so we only read newly-appended bytes on each poll.
 _offset = 0
 
-# email -> {ip: last_seen_epoch_seconds}
-_recent_ips: dict[str, dict[str, float]] = {}
+# email -> {ip: [last_accept, last_seen]}
+#   last_accept: last time a REAL access-log accept named this ip — drives the
+#                limit_ip count, so an IP the client STOPPED using ages out and
+#                can't cause a false over-limit cut (e.g. a mobile IP change).
+#   last_seen:   last_accept OR a byte-activity refresh — drives ONLY the UI
+#                "online" badge, so a long-lived idle tunnel doesn't flap.
+# Mutated by the poller thread (poll_concurrent_ips) and read by request threads
+# (client_activity), so all access is guarded by _lock.
+_recent_ips: dict[str, dict[str, list[float]]] = {}
+_lock = threading.Lock()
 
 
 def _read_new_lines() -> list[str]:
@@ -62,35 +71,41 @@ def poll_concurrent_ips(active_emails: set[str] | None = None) -> dict[str, int]
     last-seen time of their already-known IPs even with no new accept
     event, so "online" tracks actual traffic, not just connection age.
 
-    Returns ``{email: distinct_ip_count_in_window}`` for every email seen
-    recently enough to still be in the window (stale entries are pruned so
-    this dict — and the per-email IP sets — can't grow without bound).
+    Returns ``{email: distinct_ip_count_in_window}`` counting ONLY IPs with a
+    real accept inside ip_limit_window (the byte-activity refresh below bumps
+    last_seen for the online badge but NOT last_accept, so a dead IP the client
+    stopped using ages out of the enforcement count instead of inflating it).
+    Stale entries are pruned so the dict can't grow without bound.
     """
     now = time.time()
-    for line in _read_new_lines():
-        m = _LINE_RE.search(line)
-        if not m:
-            continue
-        email = m.group("email")
-        ip = m.group("ip")
-        _recent_ips.setdefault(email, {})[ip] = now
-
-    for email in active_emails or ():
-        ips = _recent_ips.get(email)
-        if ips:
-            for ip in ips:
-                ips[ip] = now
-
-    window_start = now - settings.ip_limit_window_seconds
+    lines = _read_new_lines()  # touches _offset (poller thread only) — outside lock
+    online_window = max(settings.online_window_seconds, settings.stats_poll_seconds * 2)
+    keep_start = now - online_window            # keep for the online badge
+    enforce_start = now - settings.ip_limit_window_seconds  # count for limit_ip
     counts: dict[str, int] = {}
-    for email in list(_recent_ips):
-        ips = _recent_ips[email]
-        for ip in [ip for ip, last_seen in ips.items() if last_seen < window_start]:
-            del ips[ip]
-        if ips:
-            counts[email] = len(ips)
-        else:
-            del _recent_ips[email]
+    with _lock:
+        for line in lines:
+            m = _LINE_RE.search(line)
+            if not m:
+                continue
+            _recent_ips.setdefault(m.group("email"), {})[m.group("ip")] = [now, now]
+
+        for email in active_emails or ():
+            ips = _recent_ips.get(email)
+            if ips:
+                for ts in ips.values():
+                    ts[1] = now  # refresh last_seen (badge) only, NOT last_accept
+
+        for email in list(_recent_ips):
+            ips = _recent_ips[email]
+            for ip in [ip for ip, ts in ips.items() if ts[1] < keep_start]:
+                del ips[ip]
+            if not ips:
+                del _recent_ips[email]
+                continue
+            n = sum(1 for ts in ips.values() if ts[0] >= enforce_start)
+            if n:
+                counts[email] = n
     return counts
 
 
@@ -110,8 +125,12 @@ def client_activity() -> dict[str, list[str]]:
     # _recent_ips to the short window at the last poll.
     window = max(settings.online_window_seconds, settings.stats_poll_seconds * 2)
     window_start = now - window
+    # Snapshot just the last_seen float per ip under the lock so the poller can't
+    # mutate/resize _recent_ips mid-iteration (would raise "dict changed size").
+    with _lock:
+        snapshot = {e: {ip: ts[1] for ip, ts in ips.items()} for e, ips in _recent_ips.items()}
     return {
-        email: sorted(ip for ip, last_seen in ips.items() if last_seen >= window_start)
-        for email, ips in _recent_ips.items()
-        if any(last_seen >= window_start for last_seen in ips.values())
+        email: sorted(ip for ip, seen in ips.items() if seen >= window_start)
+        for email, ips in snapshot.items()
+        if any(seen >= window_start for seen in ips.values())
     }
