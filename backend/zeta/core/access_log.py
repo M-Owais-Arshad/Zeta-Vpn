@@ -108,7 +108,7 @@ def client_activity() -> dict[str, list[str]]:
     # This is looser than the ip_limit_window used for enforcement — it never
     # relaxes the limit_ip cap, since poll_concurrent_ips() already pruned
     # _recent_ips to the short window at the last poll.
-    window = max(settings.online_window_seconds, settings.stats_poll_seconds + 15)
+    window = max(settings.online_window_seconds, settings.stats_poll_seconds * 2)
     window_start = now - window
     return {
         email: sorted(ip for ip, last_seen in ips.items() if last_seen >= window_start)

@@ -101,7 +101,12 @@ class Settings(BaseSettings):
     service_manager: str = "systemd"
 
     # --- Traffic accounting --------------------------------------------------
-    stats_poll_seconds: int = 30
+    # How often the cores' stats + access log are polled. Kept short so the
+    # "online" badge reacts near-real-time: a proxy client drops to offline
+    # within ~one poll + online_window of disconnecting. (The DB throughput
+    # snapshot is time-gated separately in tasks.py, so a fast poll doesn't
+    # shorten the dashboard chart history.)
+    stats_poll_seconds: int = 5
     # Xray's access log is the only source of per-connection source IPs (the
     # gRPC stats API only gives byte counters) — used to enforce Client.limit_ip.
     xray_access_log: Path = Path("/var/log/zetavpn/xray-access.log")
@@ -111,13 +116,14 @@ class Settings(BaseSettings):
     # client's IP frees up almost immediately after they drop off, instead of a
     # stale/changed IP hogging the limit_ip slot for minutes.
     ip_limit_window_seconds: int = 10
-    # Separate, LONGER window for the UI "online" badge (client_activity()).
-    # IP last-seen timestamps are refreshed only at poll time
-    # (stats_poll_seconds apart), so the DISPLAY window must span at least one
-    # full poll interval — otherwise a genuinely-online client flaps offline for
-    # most of every poll cycle. Decoupled from ip_limit_window_seconds so
-    # freeing the limit_ip slot quickly doesn't force the badge to read offline.
-    online_window_seconds: int = 60
+    # Window for the UI "online" badge (client_activity()). IP last-seen stamps
+    # refresh only at poll time, so this must stay >= the poll interval or a
+    # still-connected client flaps offline between polls — client_activity()
+    # enforces that floor (max with 2x the poll interval). At 12s (with a 5s
+    # poll) a client drops to offline ~12s after it disconnects: about as snappy
+    # as polling allows without a live per-connection query, which xray doesn't
+    # expose per user the way `ss` does for SSH.
+    online_window_seconds: int = 12
 
     @property
     def db_path(self) -> Path:

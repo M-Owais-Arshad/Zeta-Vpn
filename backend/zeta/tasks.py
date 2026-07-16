@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 
 from sqlalchemy import func
 
@@ -26,6 +27,12 @@ log = logging.getLogger("zeta.tasks")
 
 # Clients we've already cut off, so we don't reload the core repeatedly.
 _cut_clients: set[int] = set()
+
+# The stats poll runs frequently (for a responsive "online" badge), but the
+# dashboard throughput chart wants a longer history — so record a DB snapshot on
+# a fixed wall-clock cadence, decoupled from the poll rate.
+_SNAPSHOT_EVERY_SECONDS = 30.0
+_last_snapshot_at = 0.0
 
 
 def _accumulate_once() -> None:
@@ -74,7 +81,7 @@ def _accumulate_once() -> None:
     finally:
         db.close()
 
-    _record_snapshot()
+    _maybe_record_snapshot()
 
 
 def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001
@@ -120,6 +127,17 @@ def _enforce_limits(db) -> None:  # noqa: ANN001
     if newly_cut.get("singbox"):
         log.info("Reloading sing-box to enforce client limits")
         singbox.apply(db)
+
+
+def _maybe_record_snapshot() -> None:
+    """Record a throughput snapshot at most every _SNAPSHOT_EVERY_SECONDS,
+    regardless of how often the stats loop polls — so speeding up the poll for a
+    snappy online badge doesn't shrink the dashboard chart's time span."""
+    global _last_snapshot_at
+    now = time.time()
+    if now - _last_snapshot_at >= _SNAPSHOT_EVERY_SECONDS:
+        _last_snapshot_at = now
+        _record_snapshot()
 
 
 def _record_snapshot() -> None:

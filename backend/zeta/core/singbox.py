@@ -285,7 +285,7 @@ def client_activity() -> dict[str, list[str]]:
     to the short ip_limit window, so no stale IP survives to be over-counted.
     """
     now = time.time()
-    window = max(settings.online_window_seconds, settings.stats_poll_seconds + 15)
+    window = max(settings.online_window_seconds, settings.stats_poll_seconds * 2)
     window_start = now - window
     return {
         user: sorted(ip for ip, last_seen in ips.items() if last_seen >= window_start)
