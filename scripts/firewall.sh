@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Open the ports ZetaVPN uses and install fail2ban for SSH brute-force protection.
-# Uses ufw when available; the ruleset is intentionally permissive on proxy ports
-# because inbounds can be created on arbitrary ports from the panel.
+# Open the ports ZetaVPN uses. Uses ufw when available; the ruleset is
+# intentionally permissive on proxy ports because inbounds can be created on
+# arbitrary ports from the panel. NO fail2ban: ZetaVPN targets the gaming/
+# free-net community, where users fumble credentials constantly and must never
+# be locked out — SSH stays reachable from anywhere, like a stock VPS.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -15,8 +17,7 @@ DROPBEAR_PORT_ALT="${DROPBEAR_PORT_ALT:-143}"
 STUNNEL_PORT="${STUNNEL_PORT:-445}"
 WS_PORT="${WS_PORT:-8880}"
 
-msg "Configuring firewall + fail2ban"
-apt_install fail2ban || warn "fail2ban install skipped"
+msg "Configuring firewall (stock-friendly SSH — no fail2ban banning)"
 
 if command -v ufw >/dev/null 2>&1 || apt_install ufw; then
   # Only wipe the ruleset on the FIRST run. A re-run (install.sh is a supported
@@ -46,36 +47,14 @@ else
   warn "ufw unavailable — skipping firewall rules"
 fi
 
-# fail2ban jail for sshd — tuned for a TUNNELLING box, not a plain server.
-# ZetaVPN intentionally keeps password SSH open on :22 so tunnel clients (HTTP
-# Injector/Custom, etc.) can use it — and those clients routinely send non-SSH
-# payloads to :22 that sshd logs as "banner exchange: invalid format". With the
-# default aggressive matching, that handshake NOISE counts as auth failures and
-# fail2ban bans the user's real IP after a few connections — so they suddenly
-# can't reach the VPS from normal WiFi and can only get in THROUGH the VPN
-# (whose exit is the server's own IP, which isn't banned). `mode = normal`
-# counts ONLY genuine credential brute-force (Failed password / invalid user),
-# not that tunnel handshake noise. Loopback is ALWAYS ignored: SSH-over-WS
-# reaches sshd via the ws-proxy from 127.0.0.1, so banning it would lock out
-# every WS-SSH user at once. Set ZETA_FAIL2BAN_IGNOREIP (space-separated
-# IPs/CIDRs) to also permanently whitelist your own home/office address.
-# Policy is a light rate-limit, not a lockout: 5 wrong passwords -> that IP is
-# banned for just 5 minutes, then it clears itself, so a fumbling user (or the
-# admin) is never stuck out — while random brute-force bots still get throttled.
-if [ -d /etc/fail2ban ]; then
-  cat > /etc/fail2ban/jail.d/zeta-sshd.conf <<CONF
-[sshd]
-enabled  = true
-mode     = normal
-maxretry = 5
-findtime = 600
-bantime  = 300
-ignoreip = 127.0.0.1/8 ::1 ${ZETA_FAIL2BAN_IGNOREIP:-}
-CONF
-  systemctl enable fail2ban >/dev/null 2>&1 || true
-  systemctl restart fail2ban 2>/dev/null || true
-  # Clear any stale bans so (re-)running the installer restores access for an
-  # admin who locked their own IP out with a tunnel app before this tuning.
+# No fail2ban. If a previous ZetaVPN install (or the OS image) left a jail that
+# could lock a tunnel user out of their own VPS, remove OUR jail and clear any
+# stale bans so SSH behaves like a stock box — reachable from anywhere. We don't
+# uninstall the fail2ban package (something else may use it); we just stop it
+# from banning ZetaVPN's SSH users.
+rm -f /etc/fail2ban/jail.d/zeta-sshd.conf
+if command -v fail2ban-client >/dev/null 2>&1; then
   fail2ban-client unban --all >/dev/null 2>&1 || true
-  ok "fail2ban protecting sshd (tunnel-friendly: real brute-force only)"
+  systemctl reload fail2ban >/dev/null 2>&1 || systemctl restart fail2ban >/dev/null 2>&1 || true
 fi
+ok "SSH reachable from anywhere (no fail2ban lockouts)"

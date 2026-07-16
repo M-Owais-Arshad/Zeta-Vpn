@@ -27,22 +27,25 @@ STATE="$SNAP/state"
 
 iface() { ip route get 1.1.1.1 2>/dev/null | grep -Po 'dev \K\S+' | head -1; }
 
-# The complete "beast" tuning set. Values chosen for a small (512MB–1GB) VPS
-# running Xray/sing-box userspace proxies: high BUFFER CEILINGS apps opt into,
-# but modest per-socket DEFAULTS so thousands of flows don't waste RAM; BBR+fq
-# pacing; TFO; conntrack timeouts that stop the table filling under churn;
-# swappiness low to keep the data plane resident (never 0 — keep an OOM valve).
+# Low-latency tuning set, STABILITY-FIRST (not a max-buffer "beast" profile).
+# Tuned for a small (512MB–1GB) VPS running Xray/sing-box: BBR+fq pacing, TFO,
+# conntrack timeouts that stop the table filling under churn, swappiness low to
+# keep the data plane resident (never 0 — keep an OOM valve). Buffer CEILINGS
+# are a moderate 16MB (not 64MB) and the per-socket UDP floor is a gentle 64KB
+# (not 256KB): oversized buffers/floors are the classic cause of the "speed
+# spikes then drops" sawtooth and waste RAM across thousands of flows. 16MB
+# saturates any realistic VPS link while staying butter-smooth.
 TUNING_SYSCTLS=(
   "net.ipv4.tcp_congestion_control = bbr"
   "net.core.default_qdisc = fq"
-  "net.core.rmem_max = 67108864"
-  "net.core.wmem_max = 67108864"
-  "net.core.rmem_default = 262144"
-  "net.core.wmem_default = 262144"
-  "net.ipv4.tcp_rmem = 4096 262144 67108864"
-  "net.ipv4.tcp_wmem = 4096 262144 67108864"
-  "net.ipv4.udp_rmem_min = 262144"
-  "net.ipv4.udp_wmem_min = 262144"
+  "net.core.rmem_max = 16777216"
+  "net.core.wmem_max = 16777216"
+  "net.core.rmem_default = 131072"
+  "net.core.wmem_default = 131072"
+  "net.ipv4.tcp_rmem = 4096 131072 16777216"
+  "net.ipv4.tcp_wmem = 4096 131072 16777216"
+  "net.ipv4.udp_rmem_min = 65536"
+  "net.ipv4.udp_wmem_min = 65536"
   "net.core.netdev_max_backlog = 16384"
   "net.core.somaxconn = 8192"
   "net.ipv4.tcp_max_syn_backlog = 8192"

@@ -31,6 +31,11 @@ valid_username() {
   for r in $RESERVED; do
     [ "$1" = "$r" ] && die "reserved username: $1"
   done
+  # MUST end with a success status: the loop's final `[ ]` test is false for a
+  # valid (non-reserved) name, so without this the function returns 1 and the
+  # caller's `set -e` aborts the whole wrapper BEFORE useradd/chpasswd/etc. run
+  # — which surfaced as "unable to add user" for every account.
+  return 0
 }
 
 valid_date_or_none() {

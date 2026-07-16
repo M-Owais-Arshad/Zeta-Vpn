@@ -6,17 +6,24 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${HERE}/common.sh"
 need_root
 
-msg "Applying BBR + network tuning"
+msg "Applying BBR + network tuning (stability-first sweet spot)"
+# Sweet-spot tuning for a STABLE, high-throughput tunnel — not a max-buffer
+# "beast" profile. BBR + fq is the proven combo (fq paces per-flow and kills
+# bufferbloat); buffer ceilings are kept at a moderate 16MB, NOT 64MB. Oversized
+# socket buffers are the classic cause of the "speed spikes to 3, drops to 1,
+# jumps back" sawtooth — they let a flow overshoot and BBR then has to reel it
+# back repeatedly. 16MB saturates any realistic VPS link (even ~500Mbps at
+# 200ms RTT) while staying smooth. The heavy per-flow gaming knobs stay OPT-IN
+# in the Boost tab (scripts/zeta-tuning.sh); the base install is butter-stable.
 cat > /etc/sysctl.d/99-zeta.conf <<'CONF'
-# Managed by ZetaVPN — performance tuning
+# Managed by ZetaVPN — stability-first network tuning
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_fastopen = 3
-net.core.rmem_max = 67108864
-net.core.wmem_max = 67108864
-net.ipv4.tcp_rmem = 4096 87380 67108864
-net.ipv4.tcp_wmem = 4096 65536 67108864
-net.ipv4.tcp_mtu_probing = 1
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
 net.ipv4.ip_forward = 1
 net.core.somaxconn = 4096
 net.ipv4.tcp_max_syn_backlog = 8192

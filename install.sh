@@ -227,36 +227,27 @@ systemctl disable zeta-singbox.service >/dev/null 2>&1 || true
 systemctl enable --now zeta-ws.service
 ok "Services installed and started"
 
-# --- Low-memory hardening (<=768MB) ---------------------------------------- #
-# Cap the always-on heavy units and shrink the WS proxy via systemd drop-ins,
-# and add a swapfile, so the stack survives on a 256-512MB box. Drop-ins mean
-# larger boxes are completely unaffected (no cap is written there).
+# --- Small-box safety net (<=1GB): swap only ------------------------------- #
+# ZetaVPN is a gaming/free-net panel: users want MAX STABLE SPEED, so we do NOT
+# throttle the cores with MemoryHigh cgroup caps — those caused a periodic
+# reclaim-and-recover sawtooth in throughput. Instead we just add a swapfile as
+# an OOM safety valve on small boxes; it never slows a healthy process, it only
+# saves the box from an OOM kill under a spike. (Any stale MemoryHigh drop-ins
+# from an older install are removed so re-installs get the smooth profile.)
+rm -f /etc/systemd/system/zeta-*.service.d/lowmem.conf 2>/dev/null || true
+systemctl daemon-reload 2>/dev/null || true
 MEM_KB="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-if [ "${MEM_KB:-0}" -gt 0 ] && [ "$MEM_KB" -le 786432 ]; then
-  msg "Low-memory box (~$((MEM_KB/1024))MB) — applying lean caps + swap"
-  _lowmem_drop() {  # <unit> <extra [Service] lines>
-    mkdir -p "/etc/systemd/system/$1.d"
-    printf '[Service]\n%s\n' "$2" > "/etc/systemd/system/$1.d/lowmem.conf"
-  }
-  # MemoryHigh is a SOFT cap (throttle reclaim, never OOM-kill); MemoryMax hard.
-  _lowmem_drop zeta-panel.service "MemoryHigh=150M"$'\n'"MemoryMax=190M"
-  _lowmem_drop zeta-xray.service "MemoryHigh=96M"
-  _lowmem_drop zeta-singbox.service "MemoryHigh=96M"
-  # ws-proxy: bound concurrent tunnels so pipe buffers can't blow the RAM budget
-  # (2000x2x64KB = 250MB+ at the code default). Reset ExecStart before overriding.
-  _lowmem_drop zeta-ws.service "MemoryHigh=48M"$'\n'"ExecStart="$'\n'"ExecStart=/usr/bin/python3 ${ZETA_HOME}/proxies/ws-proxy.py --listen 0.0.0.0:${WS_PORT} --backend 127.0.0.1:22 --max-connections 300 --max-per-ip 10"
-  systemctl daemon-reload
-  systemctl restart zeta-ws.service 2>/dev/null || true
-  # Swapfile — the OOM valve vm.swappiness=10 (zeta-tuning) already assumes.
+if [ "${MEM_KB:-0}" -gt 0 ] && [ "$MEM_KB" -le 1048576 ]; then
   if [ ! -e /swapfile ] && ! swapon --show=NAME --noheadings 2>/dev/null | grep -q .; then
+    msg "Small-memory box (~$((MEM_KB/1024))MB) — adding a 1G swap safety valve"
     fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 2>/dev/null || true
     if [ -e /swapfile ]; then
       chmod 600 /swapfile; mkswap /swapfile >/dev/null 2>&1 || true
       swapon /swapfile 2>/dev/null || true
       grep -q '^/swapfile ' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+      ok "1G swap added (no CPU/speed throttling — stability-first)"
     fi
   fi
-  ok "Low-memory caps + swap applied"
 fi
 
 # Install the cron helper that expires SSH accounts.
