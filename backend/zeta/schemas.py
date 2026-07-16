@@ -251,6 +251,9 @@ class SSHAccountOut(BaseModel):
     comment: str
     created_at: datetime
     online: int = 0
+    # Source IPs of currently-connected sessions (direct OpenSSH/Dropbear).
+    # May be shorter than `online` — SSL/WS sessions don't expose a real IP.
+    online_ips: list[str] = Field(default_factory=list)
 
 
 # --- Settings / misc ---------------------------------------------------------

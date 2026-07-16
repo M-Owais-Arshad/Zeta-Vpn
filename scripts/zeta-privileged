@@ -132,6 +132,15 @@ case "$action" in
     exec ufw --force delete allow "${port}/${proto}"
     ;;
 
+  ssh-conns)
+    # Read-only: list established SSH-stack connections WITH the pids holding
+    # each socket, so the panel can attribute a peer IP to its account user
+    # (the app resolves pids -> users itself, unprivileged). OpenSSH holds the
+    # per-connection socket in a root process, so this needs root to see the
+    # owning pids. Fixed, argument-free, read-only command — safe to expose.
+    exec ss -tnHp state established '( sport = :22 or sport = :143 or sport = :149 )'
+    ;;
+
   *)
     die "unknown action: $action"
     ;;

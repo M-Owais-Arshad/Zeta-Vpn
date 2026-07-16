@@ -157,3 +157,55 @@ def online_counts() -> dict[str, int]:
         if comm in _SESSION_COMMS:
             counts[user] = counts.get(user, 0) + 1
     return counts
+
+
+def _peer_ip(peer: str) -> str:
+    """'1.2.3.4:5678' -> '1.2.3.4'; '[2001:db8::1]:5678' -> '2001:db8::1'."""
+    if peer.startswith("["):
+        return peer[1:].split("]", 1)[0]
+    return peer.rsplit(":", 1)[0] if ":" in peer else peer
+
+
+def online_sessions() -> dict[str, list[str]]:
+    """Best-effort ``{username: [source_ip, ...]}`` for live SSH sessions.
+
+    OpenSSH keeps each connection's socket in a root-owned process, so seeing
+    which pid owns a connection needs root — this goes through the read-only
+    ``ssh-conns`` privileged verb (established SSH-stack sockets + the pids
+    holding them). The pids are then resolved to their owning user with an
+    unprivileged ``ps``, and each peer IP is attributed to the account user
+    (uid >= 1000) among a connection's processes. Only direct OpenSSH/Dropbear
+    expose the real client IP here; stunnel(:445)/WS sessions terminate the
+    real IP at a root/loopback front-end, so their peer is 127.0.0.1 and is
+    dropped (they still show as online, just without a resolvable IP).
+    """
+    res = services.run_privileged(
+        ["ssh-conns"],
+        ["ss", "-tnHp", "state", "established",
+         "( sport = :22 or sport = :143 or sport = :149 )"],
+        timeout=10,
+    )
+    if not res.ok or not res.stdout.strip():
+        return {}
+    ps = services.run(["ps", "-eo", "pid=,uid=,user:64="], timeout=10)
+    owner: dict[str, tuple[int, str]] = {}
+    for line in ps.stdout.splitlines():
+        f = line.split(None, 2)
+        if len(f) == 3 and f[0].isdigit() and f[1].isdigit():
+            owner[f[0]] = (int(f[1]), f[2])
+    out: dict[str, list[str]] = {}
+    for line in res.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        ip = _peer_ip(parts[3])
+        if not ip or ip.startswith("127.") or ip == "::1":
+            continue
+        for pid in re.findall(r"pid=(\d+)", line):
+            info = owner.get(pid)
+            if info and info[0] >= 1000:
+                ips = out.setdefault(info[1], [])
+                if ip not in ips:
+                    ips.append(ip)
+                break
+    return out

@@ -17,18 +17,26 @@ from ..schemas import SSHAccountCreate, SSHAccountOut
 router = APIRouter()
 
 
-def _to_out(acc: SSHAccount, online_counts: dict[str, int] | None = None) -> SSHAccountOut:
+def _to_out(
+    acc: SSHAccount,
+    online_counts: dict[str, int] | None = None,
+    online_sessions: dict[str, list[str]] | None = None,
+) -> SSHAccountOut:
     out = SSHAccountOut.model_validate(acc)
     counts = online_counts if online_counts is not None else ssh_manager.online_counts()
     out.online = counts.get(acc.username, 0)
+    sessions = online_sessions if online_sessions is not None else ssh_manager.online_sessions()
+    out.online_ips = sessions.get(acc.username, [])
     return out
 
 
 @router.get("", response_model=list[SSHAccountOut])
 def list_accounts(db: Session = Depends(get_db), _: User = Depends(require_admin)) -> list[SSHAccountOut]:
     accounts = db.query(SSHAccount).order_by(SSHAccount.id).all()
-    counts = ssh_manager.online_counts()  # one `ps` call for the whole list
-    return [_to_out(a, counts) for a in accounts]
+    # One `ps` + one privileged `ss` for the whole list, not per account.
+    counts = ssh_manager.online_counts()
+    sessions = ssh_manager.online_sessions()
+    return [_to_out(a, counts, sessions) for a in accounts]
 
 
 @router.post("", response_model=SSHAccountOut, status_code=status.HTTP_201_CREATED)

@@ -1304,7 +1304,7 @@
     if (stale(ep)) return;
     var rows = list.map(function (a) {
       var online = a.online > 0
-        ? '<span class="badge on"><span class="dot up"></span> ' + a.online + " online</span>"
+        ? '<button class="badge on" data-ssh-ips="' + a.id + '"><span class="dot up"></span> ' + a.online + " online</button>"
         : '<span class="badge neutral"><span class="dot idle"></span> 0 online</span>';
       return "<tr>" +
         '<td><span class="badge ' + (a.enabled ? "on" : "off") + '">' + (a.enabled ? "Active" : "Locked") + "</span></td>" +
@@ -1375,6 +1375,20 @@
         if (!okGo) return;
         try { await Z.del("/ssh/" + b.dataset.del); toast('Deleted "' + (a ? a.username : "account") + '"'); reload(); }
         catch (e) { toast(e.message, "err"); }
+      };
+    });
+    page.querySelectorAll("[data-ssh-ips]").forEach(function (b) {
+      b.onclick = function () {
+        var a = list.find(function (x) { return x.id == b.getAttribute("data-ssh-ips"); });
+        var ips = (a && a.online_ips) || [];
+        modal({
+          title: "Active IPs · " + (a ? a.username : ""),
+          body: (ips.length
+            ? '<ul class="ip-list">' + ips.map(function (ip) { return '<li class="mono">' + esc(ip) + "</li>"; }).join("") + "</ul>"
+            : '<p class="hint">Connected, but the source IP isn\'t visible for SSL/WebSocket sessions (only direct OpenSSH/Dropbear expose it).</p>') +
+            '<p class="hint">' + plural(a ? a.online : 0, "session") + " online" +
+            (ips.length < (a ? a.online : 0) ? " · " + (a.online - ips.length) + " via SSL/WS (IP hidden)" : "") + "</p>",
+        });
       };
     });
   };
