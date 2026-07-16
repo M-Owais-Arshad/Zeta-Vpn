@@ -10,7 +10,7 @@
 
 [![CI](https://github.com/M-Owais-Arshad/Zeta-Vpn/actions/workflows/ci.yml/badge.svg)](https://github.com/M-Owais-Arshad/Zeta-Vpn/actions/workflows/ci.yml)
 &nbsp;![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-red)
-&nbsp;![version](https://img.shields.io/badge/version-1.3.0-blue)
+&nbsp;![version](https://img.shields.io/badge/version-1.3.1-blue)
 
 ZetaVPN turns a fresh Debian/Ubuntu VPS into a full proxy server managed from a modern
 web dashboard: **Xray-core** + **sing-box** + a complete **SSH tunnelling stack**, wired
