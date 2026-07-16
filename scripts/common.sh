@@ -67,10 +67,20 @@ detect_arch() {
 }
 
 # gh_latest <owner/repo> -> prints latest release tag (e.g. v1.8.4)
+# Extracts ONLY the tag_name value, robust to how api.github.com formats the
+# JSON. The old `grep '"tag_name"' | cut -d'"' -f4` assumed pretty-printed JSON
+# (one field per line); when GitHub returns the response minified onto a single
+# line (which it sometimes does), that grep matched the whole blob and cut gave
+# the 4th quoted field — the leading "url" value (…/releases/<id>) — which then
+# got spliced into the download URL and 404'd the whole install. This regex
+# pulls just the tag_name token wherever it sits, so both layouts work. On any
+# failure it prints nothing, so the caller's pinned-version fallback kicks in.
 gh_latest() {
   local repo="$1" tag
   tag="$(curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null \
-        | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+        | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | head -n1 \
+        | sed -E 's/.*"([^"]*)"$/\1/')"
   printf '%s' "$tag"
 }
 
