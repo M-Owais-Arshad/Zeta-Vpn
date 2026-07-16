@@ -51,14 +51,17 @@ fi
 # reaches sshd via the ws-proxy from 127.0.0.1, so banning it would lock out
 # every WS-SSH user at once. Set ZETA_FAIL2BAN_IGNOREIP (space-separated
 # IPs/CIDRs) to also permanently whitelist your own home/office address.
+# Policy is a light rate-limit, not a lockout: 5 wrong passwords -> that IP is
+# banned for just 5 minutes, then it clears itself, so a fumbling user (or the
+# admin) is never stuck out — while random brute-force bots still get throttled.
 if [ -d /etc/fail2ban ]; then
   cat > /etc/fail2ban/jail.d/zeta-sshd.conf <<CONF
 [sshd]
 enabled  = true
 mode     = normal
-maxretry = 8
+maxretry = 5
 findtime = 600
-bantime  = 900
+bantime  = 300
 ignoreip = 127.0.0.1/8 ::1 ${ZETA_FAIL2BAN_IGNOREIP:-}
 CONF
   systemctl enable fail2ban >/dev/null 2>&1 || true
