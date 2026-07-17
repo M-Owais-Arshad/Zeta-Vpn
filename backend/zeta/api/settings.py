@@ -9,7 +9,7 @@ from ..config import settings as app_settings
 from ..db import get_db
 from ..deps import require_admin
 from ..models import Setting, User
-from ..core import xray
+from ..core import ssh_manager, xray
 
 router = APIRouter()
 
@@ -72,6 +72,7 @@ def get_settings(db: Session = Depends(get_db), _: User = Depends(require_admin)
         "telegram_admin_id": stored.get("telegram_admin_id", ""),
         "sub_domain": stored.get("sub_domain", ""),
         "ssh_banner": stored.get("ssh_banner", ""),
+        "ssh_port": ssh_manager.system_ssh_port(),
         "panel_port": app_settings.port,
         "base_path": app_settings.base_path,
     }

@@ -26,6 +26,29 @@ _USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{2,31}$")
 _TUNNEL_SHELL = "/bin/false"
 
 
+def system_ssh_port() -> int:
+    """The port the system's OpenSSH actually listens on (default 22).
+
+    Some providers ship the VPS with sshd moved off :22 (e.g. 22022). The panel
+    shows the real port in the SSH connection info and the installer opens it in
+    the firewall, so a non-standard SSH port never locks the admin out. Parses
+    the readable sshd config + drop-ins; best-effort, falls back to 22."""
+    import glob
+
+    files = ["/etc/ssh/sshd_config", *sorted(glob.glob("/etc/ssh/sshd_config.d/*.conf"))]
+    for path in files:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as fh:
+                for line in fh:
+                    parts = line.strip().split()
+                    # An uncommented "Port <n>" — the first one wins for display.
+                    if len(parts) == 2 and parts[0].lower() == "port" and parts[1].isdigit():
+                        return int(parts[1])
+        except OSError:
+            continue
+    return 22
+
+
 def validate_username(username: str) -> None:
     if username.lower() in _RESERVED:
         raise ValueError(f"'{username}' is a reserved username")

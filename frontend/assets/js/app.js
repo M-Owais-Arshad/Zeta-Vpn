@@ -1205,7 +1205,7 @@
   // the RAW IP — a Cloudflare-proxied domain silently drops them (CF only
   // passes HTTP/HTTPS). Only the nginx :80/:443 WS routes ride the domain/CDN.
   var SSH_PORTS = [
-    { label: "OpenSSH (direct — start here)", value: function (ip, dom) { return ip + ":22"; } },
+    { label: "OpenSSH (direct — start here)", value: function (ip, dom, port) { return ip + ":" + (port || 22); } },
     { label: "Dropbear (main)", value: function (ip, dom) { return ip + ":109"; } },
     { label: "Dropbear (alt)", value: function (ip, dom) { return ip + ":143"; } },
     { label: "SSH-over-SSL (stunnel)", value: function (ip, dom) { return ip + ":445"; } },
@@ -1225,7 +1225,8 @@
   // The ready-to-forward text block (like the "SGP/BLR SSH ACCOUNT" style
   // messages resellers send their users) — one button copies everything at
   // once instead of five separate fields.
-  function buildShareBlock(acc, pw, ip, dom, brand) {
+  function buildShareBlock(acc, pw, ip, dom, brand, sshPort) {
+    sshPort = sshPort || 22;
     return [
       "⚡ " + (brand || "ZetaVPN") + " SSH ACCOUNT",
       "Host/IP  : " + ip,
@@ -1235,7 +1236,7 @@
       "Max login: " + acc.max_login,
       "",
       "— Direct (use the IP — simplest, works on most networks) —",
-      "OpenSSH  : " + ip + ":22",
+      "OpenSSH  : " + ip + ":" + sshPort,
       "Dropbear : " + ip + ":109, " + ip + ":143",
       "SSH-SSL  : " + ip + ":445",
       "SSH-WS   : " + ip + ":8880  (direct WebSocket)",
@@ -1247,28 +1248,30 @@
       "Payload  : GET /zeta-ws HTTP/1.1[crlf]Host: " + dom + "[crlf]Upgrade: websocket[crlf][crlf]",
       "",
       "Tip: raw-SSH ports (22/109/143/445/8880) need the IP — a Cloudflare",
-      "domain only passes :80/:443. Easiest = OpenSSH " + ip + ":22 (direct).",
+      "domain only passes :80/:443. Easiest = OpenSSH " + ip + ":" + sshPort + " (direct).",
     ].join("\n");
   }
 
   async function sshInfoModal(acc, password) {
-    var ip = "your-server-ip", dom = "your-server-ip", brand = "ZetaVPN";
+    var ip = "your-server-ip", dom = "your-server-ip", brand = "ZetaVPN", sshPort = 22;
     try {
       var s = await Z.get("/settings");
       // IP for raw-SSH ports (Cloudflare drops those); domain for the WS routes.
       ip = s.server_address || s.server_domain || ip;
       dom = s.server_domain || s.server_address || dom;
       brand = s.brand || brand;
+      // Real OpenSSH port (providers sometimes move it off :22, e.g. 22022).
+      sshPort = s.ssh_port || 22;
     } catch (e) { /* best effort */ }
     // Real password: whatever was just typed at creation, else the stored one
     // the API now returns (single-owner dashboard — safe to show/copy anytime).
     var pw = password || acc.password || "";
     var portRows = SSH_PORTS.map(function (p) {
-      var v = p.value(ip, dom);
+      var v = p.value(ip, dom, sshPort);
       return '<div class="field slim"><label>' + esc(p.label) + "</label>" +
         '<div class="linkbox"><input readonly value="' + esc(v) + '"><button class="btn sm" data-copy="' + esc(v) + '">' + IC.copy + " Copy</button></div></div>";
     }).join("");
-    var block = buildShareBlock(acc, pw, ip, dom, brand);
+    var block = buildShareBlock(acc, pw, ip, dom, brand, sshPort);
     var pwField = pw
       ? '<div class="linkbox"><span class="input-wrap"><input id="ssh-pw" type="password" readonly value="' + esc(pw) + '">' +
           '<button type="button" class="in-btn icon-btn" data-eye data-tip="Show / hide" aria-label="Show password">' + IC.eye + "</button></span>" +

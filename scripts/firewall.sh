@@ -31,10 +31,21 @@ if command -v ufw >/dev/null 2>&1 || apt_install ufw; then
   fi
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
+  # Detect the box's REAL SSH port(s) so a provider that moved sshd off :22
+  # (e.g. 22022) is never locked out. Without this, `default deny incoming` + a
+  # hardcoded :22 allow blocks the admin's actual SSH port, so the box is only
+  # reachable THROUGH the VPN — the exact "works on 3x-ui, breaks here" report
+  # (3x-ui doesn't firewall SSH). We open whatever sshd actually listens on
+  # (ground truth from `ss`, plus `sshd -T` and an optional ZETA_SSH_PORT), so
+  # any provider's custom SSH port stays reachable. `|| true` guards `set -e`
+  # when nothing matches. 22 stays a floor in case sshd isn't detectable yet.
+  SSH_PORTS="$( { ss -tlnpH 2>/dev/null | awk '/"sshd"/ {n=split($4,a,":"); print a[n]}'
+                  sshd -T 2>/dev/null | awk '/^port /{print $2}'
+                  echo "${ZETA_SSH_PORT:-}"; } | grep -E '^[0-9]+$' | sort -un || true )"
   # Core management / web. The panel itself binds 127.0.0.1 (nginx always
   # fronts it, TLS or plain :80) so PANEL_PORT is deliberately NOT opened
   # publicly here — that would only expose an unencrypted bypass around nginx.
-  for p in 22 80 443; do ufw allow "${p}/tcp" >/dev/null; done
+  for p in 22 $SSH_PORTS 80 443; do ufw allow "${p}/tcp" >/dev/null; done
   # SSH stack: dropbear (main + alt ports), stunnel (SSH-over-SSL), SSH-over-WS
   for p in "$DROPBEAR_PORT_MAIN" "$DROPBEAR_PORT_ALT" "$STUNNEL_PORT" "$WS_PORT"; do
     ufw allow "${p}/tcp" >/dev/null

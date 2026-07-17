@@ -85,6 +85,7 @@ if [ "$PURGE" -eq 1 ]; then
   fi
   # Our per-account SSH-traffic accounting chain (see zeta-privileged ssh-traffic).
   if command -v iptables >/dev/null 2>&1; then
+    iptables -D INPUT  -j ZETA_SSHACCT 2>/dev/null || true
     iptables -D OUTPUT -j ZETA_SSHACCT 2>/dev/null || true
     iptables -F ZETA_SSHACCT 2>/dev/null || true
     iptables -X ZETA_SSHACCT 2>/dev/null || true
