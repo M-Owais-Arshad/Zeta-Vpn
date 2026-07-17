@@ -76,6 +76,12 @@ WS_LOCATION=$(cat <<CONF
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        # Stream the tunnel like a direct bind (no nginx buffering): buffering
+        # adds latency + a periodic "speed drops then recovers" sawtooth on WS
+        # proxy/tunnel traffic, and stalls the SSH-over-WS banner after the 101.
+        proxy_buffering off;
+        proxy_request_buffering off;
+        tcp_nodelay on;
     }
 CONF
 )
@@ -116,6 +122,11 @@ ROOT_LOCATION_HTTP=$(cat <<CONF
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        tcp_nodelay on;
     }
 CONF
 )
@@ -136,6 +147,12 @@ ROOT_LOCATION_TLS80=$(cat <<CONF
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        # Stream the tunnel like a direct bind (no nginx buffering): buffering
+        # adds latency + a periodic "speed drops then recovers" sawtooth on WS
+        # proxy/tunnel traffic, and stalls the SSH-over-WS banner after the 101.
+        proxy_buffering off;
+        proxy_request_buffering off;
+        tcp_nodelay on;
     }
 CONF
 )
