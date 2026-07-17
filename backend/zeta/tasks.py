@@ -92,6 +92,7 @@ def _accumulate_once() -> None:
         # DB, not against this poll's deltas).
         _enforce_limits(db)
         _enforce_ssh_logins(db)
+        _accumulate_ssh_traffic(db)
     finally:
         db.close()
 
@@ -123,6 +124,37 @@ def _enforce_ssh_logins(db) -> None:  # noqa: ANN001
     for acc in accounts:
         if counts.get(acc.username, 0) > acc.max_login:
             ssh_manager.enforce_max_login(acc.username, acc.max_login)
+
+
+def _accumulate_ssh_traffic(db) -> None:  # noqa: ANN001
+    """Add each SSH account's byte delta (per-uid iptables owner-match) to its
+    running ``used_bytes`` total — the SSH equivalent of the Xray/sing-box
+    per-user stats accumulation above. Best-effort: silently no-ops on a
+    non-Linux/dev box (no `pwd`) or if the privileged counter read fails."""
+    try:
+        import pwd
+    except ImportError:
+        return
+    from .core import ssh_manager
+    from .models import SSHAccount
+
+    accounts = db.query(SSHAccount).filter(SSHAccount.enabled.is_(True)).all()
+    uid_to_acc = {}
+    for acc in accounts:
+        try:
+            uid_to_acc[pwd.getpwnam(acc.username).pw_uid] = acc
+        except KeyError:
+            continue  # account row exists but the system user is gone
+    if not uid_to_acc:
+        return
+    changed = False
+    for uid, delta in ssh_manager.traffic_deltas(list(uid_to_acc)).items():
+        acc = uid_to_acc.get(uid)
+        if acc and delta > 0:
+            acc.used_bytes = (acc.used_bytes or 0) + delta
+            changed = True
+    if changed:
+        db.commit()
 
 
 def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001

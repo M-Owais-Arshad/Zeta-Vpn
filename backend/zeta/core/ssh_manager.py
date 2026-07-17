@@ -218,6 +218,27 @@ def online_sessions() -> dict[str, list[str]]:
     return out
 
 
+def traffic_deltas(uids: list[int]) -> dict[int, int]:
+    """``{uid: bytes_transferred_since_the_last_call}`` for SSH-account uids.
+
+    Raw SSH tunnelling has no per-user stats API like Xray, so usage is measured
+    with a per-uid iptables owner-match byte counter maintained by the privileged
+    ``ssh-traffic`` verb. It reads-and-zeroes, so each call returns just this
+    interval's delta — the caller accumulates it into SSHAccount.used_bytes.
+    Best-effort: returns ``{}`` on any failure or on a non-Linux/dev box."""
+    if not uids:
+        return {}
+    res = services.run_privileged(["ssh-traffic", *[str(u) for u in uids]], ["true"], timeout=15)
+    out: dict[int, int] = {}
+    if not res.ok:
+        return out
+    for line in res.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            out[int(parts[0])] = int(parts[1])
+    return out
+
+
 def enforce_max_login(username: str, max_login: int) -> int:
     """Terminate the account's NEWEST sessions beyond ``max_login`` (keeping the
     oldest), returning how many were killed. This keeps a legitimate user's

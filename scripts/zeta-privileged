@@ -178,6 +178,41 @@ case "$action" in
     exec ss -tnHp state established '( sport = :22 or sport = :109 or sport = :143 )'
     ;;
 
+  ssh-traffic)
+    # zeta-privileged ssh-traffic <uid> [uid...]
+    # Maintain one OUTPUT owner-match COUNTER per SSH-account uid and print each
+    # uid's byte delta since the last call (read-and-zero), so the panel can show
+    # per-account SSH usage (there is no per-user stats API for raw SSH). The
+    # rules live in a dedicated ZETA_SSHACCT chain and only COUNT (no jump
+    # target), so they never drop or modify a packet — this can't affect
+    # connectivity or the real firewall.
+    CHAIN=ZETA_SSHACCT
+    iptables -nL "$CHAIN" >/dev/null 2>&1 || iptables -N "$CHAIN" 2>/dev/null || true
+    # The chain only COUNTS (no target), but it must sit at the TOP of OUTPUT:
+    # ufw's own OUTPUT chains process the packet first, so an APPENDED jump never
+    # sees the traffic and every counter stays zero. Re-assert position 1 each
+    # call (cheap: one rule move); RETURN at the chain's end lets ufw run as normal.
+    iptables -D OUTPUT -j "$CHAIN" 2>/dev/null || true
+    iptables -I OUTPUT 1 -j "$CHAIN" 2>/dev/null || true
+    want=" "
+    for u in "$@"; do
+      [[ "$u" =~ ^[0-9]+$ ]] || continue
+      want="${want}${u} "
+      iptables -C "$CHAIN" -m owner --uid-owner "$u" 2>/dev/null \
+        || iptables -A "$CHAIN" -m owner --uid-owner "$u" 2>/dev/null || true
+    done
+    # Drop counters for uids no longer accounted (deleted accounts).
+    for u in $(iptables -S "$CHAIN" 2>/dev/null | grep -oE 'uid-owner [0-9]+' | awk '{print $2}'); do
+      case "$want" in *" $u "*) ;; *) iptables -D "$CHAIN" -m owner --uid-owner "$u" 2>/dev/null || true ;; esac
+    done
+    # Emit "uid bytes" from the counters, then zero them for the next interval.
+    # Parse the verbose listing (stable columns: pkts=$1 bytes=$2 … owner UID
+    # match <uid>) rather than `-S -c`, whose counter format varies by backend.
+    iptables -nvxL "$CHAIN" 2>/dev/null | awk '/owner UID match/ {
+        for (i=1;i<=NF;i++) if ($i=="match") print $(i+1), $2 }' || true
+    iptables -Z "$CHAIN" 2>/dev/null || true
+    ;;
+
   *)
     die "unknown action: $action"
     ;;

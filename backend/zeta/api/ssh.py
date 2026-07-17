@@ -119,6 +119,19 @@ def renew_account(
     return _to_out(acc)
 
 
+@router.post("/{account_id}/reset-traffic", response_model=SSHAccountOut)
+def reset_traffic(
+    account_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)
+) -> SSHAccountOut:
+    acc = db.get(SSHAccount, account_id)
+    if acc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    acc.used_bytes = 0
+    db.commit()
+    db.refresh(acc)
+    return _to_out(acc)
+
+
 @router.delete("/{account_id}")
 def delete_account(
     account_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)

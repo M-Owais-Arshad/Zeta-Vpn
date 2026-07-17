@@ -1317,10 +1317,12 @@
         "<td><b>" + esc(a.username) + "</b>" + (a.comment ? '<span class="sub">' + esc(a.comment) + "</span>" : "") + "</td>" +
         "<td>" + a.max_login + "</td>" +
         "<td>" + online + "</td>" +
+        '<td class="mono">' + fmtBytes(a.used_bytes || 0) + "</td>" +
         "<td>" + (a.expiry_date ? fmtExpiry(new Date(a.expiry_date).getTime()) : '<span class="muted">Never</span>') + "</td>" +
         '<td class="actions">' +
           '<button class="icon-btn success" data-info="' + a.id + '" data-tip="Connection info" aria-label="Connection info">' + IC.link + "</button>" +
           '<button class="icon-btn" data-renew="' + a.id + '" data-tip="Renew" aria-label="Renew">' + IC.cal + "</button>" +
+          '<button class="icon-btn" data-resettr="' + a.id + '" data-tip="Reset traffic" aria-label="Reset traffic">' + IC.refresh + "</button>" +
           '<button class="icon-btn warn" data-lock="' + a.id + '" data-en="' + a.enabled + '" data-tip="' + (a.enabled ? "Lock" : "Unlock") + '" aria-label="' + (a.enabled ? "Lock" : "Unlock") + '">' + IC.power + "</button>" +
           '<button class="icon-btn danger" data-del="' + a.id + '" data-tip="Delete" aria-label="Delete">' + IC.trash + "</button>" +
         "</td></tr>";
@@ -1333,7 +1335,7 @@
       "</div></div>" +
       (list.length
         ? '<div class="table-wrap"><table>' +
-          '<thead><tr><th>Status</th><th>Username</th><th>Max login</th><th>Online</th><th>Expiry</th><th class="right">Actions</th></tr></thead><tbody>' + rows + "</tbody></table></div>"
+          '<thead><tr><th>Status</th><th>Username</th><th>Max login</th><th>Online</th><th>Traffic</th><th>Expiry</th><th class="right">Actions</th></tr></thead><tbody>' + rows + "</tbody></table></div>"
         : emptyState(IC.terminal, "No SSH accounts yet",
             "SSH accounts work with HTTP Injector / HTTP Custom-style tunnelling apps over OpenSSH, Dropbear, SSL and WebSocket.",
             '<button class="btn primary" id="empty-add">' + IC.plus + " Create your first account</button>")) +
@@ -1355,6 +1357,18 @@
       b.onclick = function () {
         var a = list.find(function (x) { return x.id == b.dataset.renew; });
         if (a) renewModal(a);
+      };
+    });
+    page.querySelectorAll("[data-resettr]").forEach(function (b) {
+      b.onclick = function () {
+        var a = list.find(function (x) { return x.id == b.dataset.resettr; });
+        busy(b, async function () {
+          try {
+            await Z.post("/ssh/" + b.dataset.resettr + "/reset-traffic");
+            toast('Traffic reset for "' + (a ? a.username : "account") + '"');
+            reload();
+          } catch (e) { toast(e.message, "err"); }
+        });
       };
     });
     page.querySelectorAll("[data-lock]").forEach(function (b) {
@@ -1555,7 +1569,12 @@
         '<button class="btn primary" id="save-tg">Save Telegram</button>' +
         '<div class="modal-sec">Panel</div>' +
         '<p class="hint">Internal port: <b>' + esc(s.panel_port) + "</b> (behind nginx) · Base path: <b>" + esc(s.base_path || "/") + "</b></p></div>" +
-      "</div>";
+      "</div>" +
+
+      '<div class="card pad-lg"><div class="card-head"><h3>SSH server message</h3></div>' +
+        '<p class="hint">A custom banner every SSH user sees the moment they connect (before login) — like the "message from server" other tunnel panels show. Applies to OpenSSH, Dropbear, SSL and WebSocket, and updates instantly for new connections. Leave blank for none.</p>' +
+        field("Banner text", '<textarea id="st-sshbanner" rows="4" placeholder="Welcome to MyVPN&#10;Telegram: @myvpn">' + esc(s.ssh_banner || "") + "</textarea>") +
+        '<button class="btn primary" id="save-sshbanner">Save banner</button></div>';
 
     $("#save-srv").onclick = function (ev) {
       busy(ev.currentTarget, async function () {
@@ -1578,6 +1597,14 @@
             telegram_admin_id: val("#st-tgadmin", page),
           });
           toast("Telegram settings saved");
+        } catch (e) { toast(e.message, "err"); }
+      });
+    };
+    $("#save-sshbanner").onclick = function (ev) {
+      busy(ev.currentTarget, async function () {
+        try {
+          await Z.put("/settings", { ssh_banner: val("#st-sshbanner", page) });
+          toast("SSH banner saved — new connections see it immediately");
         } catch (e) { toast(e.message, "err"); }
       });
     };

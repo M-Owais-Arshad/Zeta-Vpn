@@ -59,7 +59,7 @@ def _ensure_columns() -> None:
     from sqlalchemy import inspect, text
 
     wanted = {
-        "ssh_accounts": [("password", "VARCHAR(128)")],
+        "ssh_accounts": [("password", "VARCHAR(128)"), ("used_bytes", "BIGINT DEFAULT 0")],
         "inbounds": [("extra_ports", "JSON DEFAULT '[]'")],
     }
     insp = inspect(engine)

@@ -13,6 +13,17 @@ DROPBEAR_PORT_ALT="${DROPBEAR_PORT_ALT:-143}"
 STUNNEL_PORT="${STUNNEL_PORT:-445}"
 WS_PORT="${WS_PORT:-8880}"
 
+# Custom pre-auth SSH banner ("message from server" the client sees on connect).
+# The panel writes this file (Settings -> SSH banner); sshd/dropbear re-read it
+# per connection, so the message updates with no reload. data_dir is
+# panel-writable (zetavpn) yet readable by root-run sshd. Must match
+# config.py::ssh_banner_file.
+SSH_BANNER_FILE="${ZETA_HOME:-/opt/zetavpn}/data/ssh-banner.txt"
+mkdir -p "$(dirname "$SSH_BANNER_FILE")"
+[ -f "$SSH_BANNER_FILE" ] || : > "$SSH_BANNER_FILE"
+chown zetavpn:zetavpn "$SSH_BANNER_FILE" 2>/dev/null || true
+chmod 644 "$SSH_BANNER_FILE"
+
 msg "Installing SSH tunnelling stack"
 apt_install openssh-server dropbear stunnel4 net-tools
 
@@ -37,6 +48,9 @@ PermitTunnel yes
 ClientAliveInterval 60
 ClientAliveCountMax 3
 CONF
+# Pre-auth banner (panel-managed; appended after the quoted heredoc so the path
+# expands). sshd reads the file per connection, so banner edits need no reload.
+echo "Banner ${SSH_BANNER_FILE}" >> /etc/ssh/sshd_config.d/00-zeta.conf
 # Validate before reloading so a bad drop-in can't lock out SSH.
 if sshd -t 2>/dev/null; then
   systemctl reload ssh 2>/dev/null || systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
@@ -67,9 +81,9 @@ if [ -f /etc/default/dropbear ]; then
   # whole daemon). Mirrors OpenSSH's ClientAliveInterval 60 so an idle tunnel on
   # a CGNAT/mobile NAT keeps its mapping alive instead of being silently dropped.
   if grep -q '^DROPBEAR_EXTRA_ARGS=' /etc/default/dropbear; then
-    sed -i "s|^DROPBEAR_EXTRA_ARGS=.*|DROPBEAR_EXTRA_ARGS=\"-p ${DROPBEAR_PORT_ALT} -K 60\"|" /etc/default/dropbear
+    sed -i "s|^DROPBEAR_EXTRA_ARGS=.*|DROPBEAR_EXTRA_ARGS=\"-p ${DROPBEAR_PORT_ALT} -K 60 -b ${SSH_BANNER_FILE}\"|" /etc/default/dropbear
   else
-    echo "DROPBEAR_EXTRA_ARGS=\"-p ${DROPBEAR_PORT_ALT} -K 60\"" >> /etc/default/dropbear
+    echo "DROPBEAR_EXTRA_ARGS=\"-p ${DROPBEAR_PORT_ALT} -K 60 -b ${SSH_BANNER_FILE}\"" >> /etc/default/dropbear
   fi
 fi
 systemctl enable dropbear >/dev/null 2>&1 || true

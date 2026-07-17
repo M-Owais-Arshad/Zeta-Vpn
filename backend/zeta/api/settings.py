@@ -22,10 +22,29 @@ ALLOWED_KEYS = {
     "telegram_bot_token",
     "telegram_admin_id",
     "sub_domain",
+    "ssh_banner",
 }
 
 # Keys mirrored onto the in-memory settings singleton so links reflect changes now.
 _LIVE_MIRROR = {"server_address", "server_domain", "brand"}
+
+
+def _write_ssh_banner(text: str) -> None:
+    """Write the admin's SSH banner to the file OpenSSH/Dropbear read on connect.
+
+    sshd/dropbear were pointed at this path at install and re-read it per
+    connection, so a new message takes effect immediately — no reload. Normalise
+    to LF + a trailing newline so it renders cleanly in a terminal. Best-effort:
+    on a box where the file isn't panel-writable (older install) the text is
+    still saved in the DB and applied on the next (re)install."""
+    try:
+        path = app_settings.ssh_banner_file
+        body = text.replace("\r\n", "\n").replace("\r", "\n")
+        if body and not body.endswith("\n"):
+            body += "\n"
+        path.write_text(body, encoding="utf-8")
+    except OSError:
+        pass
 
 
 def load_into_settings(db: Session) -> None:
@@ -45,6 +64,7 @@ def get_settings(db: Session = Depends(get_db), _: User = Depends(require_admin)
         "telegram_bot_token": stored.get("telegram_bot_token", ""),
         "telegram_admin_id": stored.get("telegram_admin_id", ""),
         "sub_domain": stored.get("sub_domain", ""),
+        "ssh_banner": stored.get("ssh_banner", ""),
         "panel_port": app_settings.port,
         "base_path": app_settings.base_path,
     }
@@ -65,6 +85,8 @@ def update_settings(
             row.value = str(value)
         if key in _LIVE_MIRROR:
             setattr(app_settings, key, str(value))
+        if key == "ssh_banner":
+            _write_ssh_banner(str(value))
     db.commit()
     return {"ok": True}
 

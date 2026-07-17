@@ -265,6 +265,9 @@ class SSHAccountOut(BaseModel):
     enabled: bool
     comment: str
     created_at: datetime
+    # Total bytes relayed by this account (up + down combined — raw SSH has no
+    # per-direction stats). Accumulated from per-uid iptables counters.
+    used_bytes: int = 0
     online: int = 0
     # Source IPs of currently-connected sessions (direct OpenSSH/Dropbear).
     # May be shorter than `online` — SSL/WS sessions don't expose a real IP.

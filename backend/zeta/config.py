@@ -105,6 +105,15 @@ class Settings(BaseSettings):
     # "systemd" on a real server; "none" disables service control (dev/testing).
     service_manager: str = "systemd"
 
+    # --- SSH ------------------------------------------------------------------
+    # Pre-auth banner shown to every SSH client on connect (OpenSSH `Banner` /
+    # Dropbear `-b`). The admin sets the text from the panel; the panel writes it
+    # here and sshd/dropbear read it fresh per connection, so no reload is needed
+    # to change the message. Lives under data_dir so the unprivileged panel can
+    # write it while root-run sshd can read it. install_ssh_stack.sh points the
+    # daemons at this exact path.
+    ssh_banner_file: Path = Field(default=Path(ZETA_HOME, "data", "ssh-banner.txt"))
+
     # --- Traffic accounting --------------------------------------------------
     # How often the cores' stats + access log are polled. Kept short so the
     # "online" badge reacts near-real-time: a proxy client drops to offline

@@ -223,6 +223,10 @@ class SSHAccount(Base):
     expiry_date: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     comment: Mapped[str] = mapped_column(String(255), default="")
+    # Total bytes relayed by this account (up + down). Measured per Linux uid via
+    # an iptables owner-match counter and accumulated by the stats poller — SSH
+    # tunnelling has no per-direction stats API like Xray, so this is one total.
+    used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
 
 
