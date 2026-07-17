@@ -1201,12 +1201,12 @@
   // on its own port, and via nginx on :80 at the WS path (the
   // "bug host"/CDN-friendly route tunnelling apps expect) — both are
   // real, simultaneously-working routes to the exact same backend.
-  // Each row picks its own host: the raw-SSH ports (22/149/143/445/8880) need
+  // Each row picks its own host: the raw-SSH ports (22/109/143/445/8880) need
   // the RAW IP — a Cloudflare-proxied domain silently drops them (CF only
   // passes HTTP/HTTPS). Only the nginx :80/:443 WS routes ride the domain/CDN.
   var SSH_PORTS = [
     { label: "OpenSSH (direct — start here)", value: function (ip, dom) { return ip + ":22"; } },
-    { label: "Dropbear (main)", value: function (ip, dom) { return ip + ":149"; } },
+    { label: "Dropbear (main)", value: function (ip, dom) { return ip + ":109"; } },
     { label: "Dropbear (alt)", value: function (ip, dom) { return ip + ":143"; } },
     { label: "SSH-over-SSL (stunnel)", value: function (ip, dom) { return ip + ":445"; } },
     { label: "SSH-over-WebSocket (direct)", value: function (ip, dom) { return ip + ":8880"; } },
@@ -1236,7 +1236,7 @@
       "",
       "— Direct (use the IP — simplest, works on most networks) —",
       "OpenSSH  : " + ip + ":22",
-      "Dropbear : " + ip + ":149, " + ip + ":143",
+      "Dropbear : " + ip + ":109, " + ip + ":143",
       "SSH-SSL  : " + ip + ":445",
       "SSH-WS   : " + ip + ":8880  (direct WebSocket)",
       "UDPGW    : 127.0.0.1:7300  (set in the tunnel app for UDP/gaming)",
@@ -1246,7 +1246,7 @@
       "SSH-WS/TLS: " + dom + ":443  (TLS)",
       "Payload  : GET /zeta-ws HTTP/1.1[crlf]Host: " + dom + "[crlf]Upgrade: websocket[crlf][crlf]",
       "",
-      "Tip: raw-SSH ports (22/149/143/445/8880) need the IP — a Cloudflare",
+      "Tip: raw-SSH ports (22/109/143/445/8880) need the IP — a Cloudflare",
       "domain only passes :80/:443. Easiest = OpenSSH " + ip + ":22 (direct).",
     ].join("\n");
   }

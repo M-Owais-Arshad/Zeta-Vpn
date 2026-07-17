@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 need_root
 
 # Default ports (override via env before running).
-DROPBEAR_PORT_MAIN="${DROPBEAR_PORT_MAIN:-149}"
+DROPBEAR_PORT_MAIN="${DROPBEAR_PORT_MAIN:-109}"
 DROPBEAR_PORT_ALT="${DROPBEAR_PORT_ALT:-143}"
 STUNNEL_PORT="${STUNNEL_PORT:-445}"
 WS_PORT="${WS_PORT:-8880}"
@@ -50,7 +50,7 @@ ok "OpenSSH configured for tunnelling (password auth enabled)"
 # $DROPBEAR_EXTRA_ARGS`. Ubuntu ships /etc/default/dropbear with those first two
 # COMMENTED OUT (`#DROPBEAR_PORT=22`), so a naive `s/^DROPBEAR_PORT=.*/…/` matches
 # nothing — the main port never binds and `-p ""`/`-W ""` go empty. Set a helper
-# that uncomments-or-appends each key so the main port (149) actually comes up
+# that uncomments-or-appends each key so the main port (109) actually comes up
 # alongside the alt port (143).
 if [ -f /etc/default/dropbear ]; then
   set_kv() { # key value file

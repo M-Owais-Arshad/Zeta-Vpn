@@ -175,7 +175,7 @@ case "$action" in
     # (the app resolves pids -> users itself, unprivileged). OpenSSH holds the
     # per-connection socket in a root process, so this needs root to see the
     # owning pids. Fixed, argument-free, read-only command — safe to expose.
-    exec ss -tnHp state established '( sport = :22 or sport = :143 or sport = :149 )'
+    exec ss -tnHp state established '( sport = :22 or sport = :109 or sport = :143 or sport = :149 )'
     ;;
 
   *)

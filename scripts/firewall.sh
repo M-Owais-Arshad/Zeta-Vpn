@@ -12,7 +12,7 @@ need_root
 
 # Same env vars + defaults as install_ssh_stack.sh / install_nginx.sh — a
 # custom port there must open the matching port here, not a hardcoded one.
-DROPBEAR_PORT_MAIN="${DROPBEAR_PORT_MAIN:-149}"
+DROPBEAR_PORT_MAIN="${DROPBEAR_PORT_MAIN:-109}"
 DROPBEAR_PORT_ALT="${DROPBEAR_PORT_ALT:-143}"
 STUNNEL_PORT="${STUNNEL_PORT:-445}"
 WS_PORT="${WS_PORT:-8880}"
