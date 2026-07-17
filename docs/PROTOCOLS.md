@@ -49,7 +49,7 @@ tunnelling only).
 | Service | Default port | Notes |
 |---|---|---|
 | OpenSSH | 22 | Tunnelling enabled (`AllowTcpForwarding`, `GatewayPorts`) |
-| Dropbear | 143, 149 | Lightweight SSH |
+| Dropbear | 109, 143 | Lightweight SSH |
 | stunnel (SSH-over-SSL) | 445 | Wraps Dropbear in TLS |
 | SSH-over-WebSocket (`zeta-ws`) | 8880 | Ride a CDN via nginx WS path `/zeta-ws` |
 

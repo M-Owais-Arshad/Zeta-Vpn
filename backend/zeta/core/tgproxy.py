@@ -3,9 +3,12 @@
 The heavy lifting (binary install, secret, config, firewall, systemd unit)
 lives in the root-owned ``scripts/zeta-tgproxy.sh`` (installed to
 ``/usr/local/sbin/zeta-tgproxy``); the panel only triggers its three fixed
-sub-actions through the ``zeta-privileged`` wrapper. The proxy binds a
-dedicated public port (8443/tcp by default) so it never collides with nginx,
-xray, the SSH stack or the panel — see core/portcheck.py's registry.
+sub-actions through the ``zeta-privileged`` wrapper. The proxy binds its own
+dedicated public port (8443/tcp by default), clear of nginx/xray/the SSH stack
+/the panel; once it's up, any xray or sing-box inbound the admin later tries to
+put on that same port is rejected by the live bound-port check in
+``core/portcheck.py`` (which reads the real OS port table), so the two can't
+silently clash.
 
 ZetaVPN by Muhammad Owais · (c) 2026 · AGPL-3.0.
 """

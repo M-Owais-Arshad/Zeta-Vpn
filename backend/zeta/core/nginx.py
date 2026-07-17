@@ -59,7 +59,14 @@ def generate(db: Session) -> str:
     for ib in inbounds:
         if not protocols.is_ws_family(ib.network):
             continue
-        blocks.append(_LOCATION_TEMPLATE.format(path=_path_for(ib), internal_port=ib.internal_port))
+        path = _path_for(ib)
+        # Never emit a location that duplicates nginx's built-in panel root `/`
+        # or the SSH-over-WS path — a duplicate `location` in the same server
+        # block fails `nginx -t` and bricks nginx on the next restart. The API
+        # rejects these at create/update; this skips any pre-existing bad row.
+        if path in ("/", "/zeta-ws"):
+            continue
+        blocks.append(_LOCATION_TEMPLATE.format(path=path, internal_port=ib.internal_port))
     header = "# Managed by ZetaVPN — regenerated whenever a WS-family inbound changes.\n"
     return header + ("\n".join(blocks) + "\n" if blocks else "")
 

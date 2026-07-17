@@ -64,7 +64,7 @@ per-inbound counters are available over the local gRPC API.
 
 ## Traffic accounting & enforcement (`tasks.py`)
 
-An asyncio loop runs every `stats_poll_seconds` (default 30s):
+An asyncio loop runs every `stats_poll_seconds` (default 5s):
 
 1. `xray api statsquery -reset` returns and zeroes the counters.
 2. Deltas are added to each client/inbound in the DB.

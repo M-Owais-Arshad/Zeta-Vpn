@@ -60,7 +60,7 @@ file to regenerate credentials.
 4. Downloads and installs **Xray-core** and **sing-box** (SHA256-verified where published).
 5. Sets up the **SSH stack** (OpenSSH tuning, Dropbear, stunnel/SSL, WS proxy).
 6. Applies **BBR** + kernel tuning, configures **nginx**, issues **TLS** (if a domain is set),
-   enables **ufw** + **fail2ban**.
+   enables **ufw** (no fail2ban — avoids SSH lockouts for shared-IP tunnel users).
 7. Installs and starts systemd units and the `zeta` CLI, adds an expiry cron job.
 
 ## After install

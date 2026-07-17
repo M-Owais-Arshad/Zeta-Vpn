@@ -48,7 +48,7 @@ together by a FastAPI backend and installed straight from GitHub.
   with the `Subscription-Userinfo` quota/expiry header and per-config QR codes.
 - **Secure by default.** Randomised admin credentials and a secret panel path at install, bcrypt
   hashing, TOTP 2FA, login brute-force lockout, session revocation on password change, verified
-  binary downloads, fail2ban + ufw. No default passwords, ever.
+  binary downloads, ufw. No default passwords, ever.
 - **`zeta` CLI.** A terminal menu for status, restarts, updates, backups and quick SSH accounts.
 
 ---
@@ -253,7 +253,7 @@ Still stuck? Make sure your **VPS provider's firewall / security group** allows 
 | nginx reverse proxy | `/etc/nginx/conf.d/zeta.conf` | `nginx` |
 | CLI manager | `/usr/local/bin/zeta` | — |
 
-Default ports: **panel** `2096` · **SSH** `22`, `143`/`149` (Dropbear), `445` (SSL), `8880` (WS) ·
+Default ports: **panel** `2096` · **SSH** `22`, `109`/`143` (Dropbear), `445` (SSL), `8880` (WS) ·
 proxy inbounds on whatever ports you choose in the panel.
 
 ---
@@ -319,7 +319,7 @@ zetavpn/
 
 The panel manages system users and services, so it runs privileged — but ships **no default
 credentials**, a **secret URL path**, **2FA**, **brute-force lockout**, **verified downloads**,
-**fail2ban** and **ufw** enabled out of the box. Read [docs/SECURITY.md](docs/SECURITY.md) before
+and **ufw** enabled out of the box. Read [docs/SECURITY.md](docs/SECURITY.md) before
 exposing it to the internet, and always put it behind a domain + TLS.
 
 ## ⚖️ License & responsible use

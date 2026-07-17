@@ -28,6 +28,12 @@ log = logging.getLogger("zeta.tasks")
 # Clients we've already cut off, so we don't reload the core repeatedly.
 _cut_clients: set[int] = set()
 
+# Hysteresis for limit_ip: client_id -> monotonic-ish time it first went back
+# under its IP cap. The flag is only cleared after IP_LIMIT_CLEAR_COOLDOWN of
+# continuous under-limit, so a flapping client can't oscillate the core.
+_ip_ok_since: dict[int, float] = {}
+IP_LIMIT_CLEAR_COOLDOWN = 60.0
+
 # The stats poll runs frequently (for a responsive "online" badge), but the
 # dashboard throughput chart wants a longer history — so record a DB snapshot on
 # a fixed wall-clock cadence, decoupled from the poll rate.
@@ -133,10 +139,28 @@ def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001
     # window-filtered {email: [ip,...]} shape.
     for email, ips in singbox.client_activity().items():
         counts[email] = max(counts.get(email, 0), len(ips))
+    now = time.time()
     for client in db.query(Client).filter(Client.limit_ip > 0).all():
         exceeded = counts.get(client.email, 0) > client.limit_ip
-        if exceeded != client.ip_limit_exceeded:
-            client.ip_limit_exceeded = exceeded
+        # HYSTERESIS: flag immediately on exceed, but only CLEAR after the client
+        # has stayed under its cap for a sustained cooldown. Without this, a
+        # client that persistently exceeds limit_ip (a phone on WiFi+cellular /
+        # IPv4+IPv6 / CGNAT) oscillates every ~10s — cut, IPs age out, re-added,
+        # reconnects, over-limit, cut — and each flip made _enforce_limits do a
+        # full `systemctl restart` of the core, dropping EVERY user's tunnel:
+        # the reported mid-transfer speed sawtooth. Now an over-limit client is
+        # cut once and stays cut until it is genuinely back under the cap.
+        if exceeded:
+            _ip_ok_since.pop(client.id, None)
+            if not client.ip_limit_exceeded:
+                client.ip_limit_exceeded = True
+        elif client.ip_limit_exceeded:
+            first_ok = _ip_ok_since.setdefault(client.id, now)
+            if now - first_ok >= IP_LIMIT_CLEAR_COOLDOWN:
+                client.ip_limit_exceeded = False
+                _ip_ok_since.pop(client.id, None)
+        else:
+            _ip_ok_since.pop(client.id, None)
     db.commit()
 
 
@@ -145,7 +169,10 @@ def _enforce_limits(db) -> None:  # noqa: ANN001
     enabled = db.query(Client).filter(Client.enabled.is_(True)).all()
     # Prune ids of clients deleted/disabled since we last cut them, so a reused
     # SQLite rowid can never masquerade as a previously-cut client.
-    _cut_clients.intersection_update({c.id for c in enabled})
+    live_ids = {c.id for c in enabled}
+    _cut_clients.intersection_update(live_ids)
+    for _gone in [cid for cid in _ip_ok_since if cid not in live_ids]:
+        _ip_ok_since.pop(_gone, None)
 
     newly_cut: dict[str, bool] = {}
     for client in enabled:

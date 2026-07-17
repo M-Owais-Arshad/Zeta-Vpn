@@ -63,10 +63,6 @@ if [ "$PURGE" -eq 1 ]; then
   # that made them useful for tunnelling is gone.
   systemctl disable --now dropbear 2>/dev/null || true
   systemctl disable --now stunnel4 2>/dev/null || true
-  # HAProxy port multiplexer (fronts :80/:443). Stop it and drop our config so
-  # nginx can take the public ports again; the package is left installed.
-  systemctl disable --now haproxy 2>/dev/null || true
-  rm -f /etc/haproxy/haproxy.cfg
   rm -f /etc/stunnel/stunnel.conf /etc/stunnel/stunnel.pem
   # Revert install_ssh_stack.sh's sed edits to the dropbear package config
   # (harmless while the service is disabled, but leaving it means a later
@@ -82,7 +78,7 @@ if [ "$PURGE" -eq 1 ]; then
   # this can't know in retrospect; best-effort).
   if command -v ufw >/dev/null 2>&1; then
     # 8443 = the MTProto proxy's default port (ZETA_MTPROXY_PORT).
-    for p in 22 80 443 109 149 143 445 8880 8443; do
+    for p in 22 80 443 109 143 445 8880 8443; do
       ufw delete allow "${p}/tcp" >/dev/null 2>&1 || true
     done
     ufw delete allow 443/udp >/dev/null 2>&1 || true

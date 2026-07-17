@@ -149,7 +149,6 @@ After=network.target
 ExecStart=/usr/local/bin/badvpn-udpgw --loglevel 0 --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 50
 Restart=always
 RestartSec=3
-MemoryHigh=64M
 
 [Install]
 WantedBy=multi-user.target

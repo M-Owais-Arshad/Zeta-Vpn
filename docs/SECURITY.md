@@ -12,7 +12,7 @@ vulnerability it is designed to avoid.
 - **Password hashing** with bcrypt (cost 12), constant-time verification.
 - **TOTP 2FA** available for every operator (Settings → Two-factor).
 - **Brute-force lockout** — per IP+username; N failures trigger a timed lockout
-  (`login_max_attempts` / `login_lockout_seconds`). Pair with fail2ban (installed) for persistence.
+  (`login_max_attempts` / `login_lockout_seconds`), enforced in the panel itself.
 - **Session revocation.** Changing your password bumps a `token_version` embedded in issued JWTs,
   invalidating every existing session.
 - **Same-origin by default.** CORS is off unless you configure `ZETA_CORS_ORIGINS`; the API uses
@@ -21,7 +21,10 @@ vulnerability it is designed to avoid.
   `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
 - **Verified downloads.** Core binaries are checked against their published SHA256 where available;
   a mismatch aborts the install.
-- **Firewall + fail2ban** (`ufw` default-deny inbound, sshd jail) enabled by the installer.
+- **Firewall** (`ufw` default-deny inbound) enabled by the installer. fail2ban is
+  intentionally **not** used: ZetaVPN targets gaming/free-net, where an over-eager SSH
+  ban locks out legitimate tunnel users sharing an IP (the panel's own login lockout still
+  guards the web panel).
 - **Atomic config writes** and `xray -test` / `sing-box check` validation helpers prevent a
   half-written config from taking a core down.
 - **Auditable scripts.** Every installer is plaintext bash + systemd — no obfuscated/compiled blobs.

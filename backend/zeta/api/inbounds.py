@@ -25,6 +25,23 @@ log = logging.getLogger("zeta.api.inbounds")
 # collision-free without needing its own uniqueness check.
 _INTERNAL_PORT_BASE = 20000
 
+# nginx's server block already owns these exact locations (the panel root `/`
+# and the SSH-over-WS path from install_nginx.sh's WS_PATH). A fronted WS inbound
+# whose path duplicates one makes the generated include emit a SECOND identical
+# `location` in the same server block -> `nginx -t` fails; the live reload
+# silently keeps the old config and the next restart/reboot won't start nginx
+# (panel + SSH-over-WS both down). Reject those paths at create/update time.
+_RESERVED_FRONTED_PATHS = {"/", "/zeta-ws"}
+
+
+def _reject_reserved_path(fronted: bool, ws_path: str) -> None:
+    if fronted and ws_path in _RESERVED_FRONTED_PATHS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Path '{ws_path}' is reserved by the panel / SSH-over-WS front on :80/:443 — "
+            "choose a different path (e.g. /vless), or use a dedicated port.",
+        )
+
 
 def _to_out(ib: Inbound, client_count: int | None = None) -> InboundOut:
     out = InboundOut.model_validate(ib)
@@ -242,6 +259,7 @@ def create_inbound(
                 "(stream_settings.<network>.path). Give it its own dedicated port instead "
                 "for a free or empty path.",
             )
+        _reject_reserved_path(fronted, ws_path)
     extra_ports = _validate_ports(db, port, fronted, body.protocol, body.extra_ports, exclude_id=None)
 
     port_key = protocols.compute_port_key(port, body.protocol, body.network, stream)
@@ -343,6 +361,7 @@ def update_inbound(
                 "(stream_settings.<network>.path). Give it its own dedicated port instead "
                 "for a free or empty path.",
             )
+        _reject_reserved_path(fronted, ws_path)
     if not fronted:
         ib.internal_port = None
     # Pass old_direct so this inbound's own already-bound ports (still live in

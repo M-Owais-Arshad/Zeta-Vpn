@@ -30,11 +30,18 @@ iface() { ip route get 1.1.1.1 2>/dev/null | grep -Po 'dev \K\S+' | head -1; }
 # Low-latency tuning set, STABILITY-FIRST (not a max-buffer "beast" profile).
 # Tuned for a small (512MB–1GB) VPS running Xray/sing-box: BBR+fq pacing, TFO,
 # conntrack timeouts that stop the table filling under churn, swappiness low to
-# keep the data plane resident (never 0 — keep an OOM valve). Buffer CEILINGS
-# are a moderate 16MB (not 64MB) and the per-socket UDP floor is a gentle 64KB
-# (not 256KB): oversized buffers/floors are the classic cause of the "speed
-# spikes then drops" sawtooth and waste RAM across thousands of flows. 16MB
-# saturates any realistic VPS link while staying butter-smooth.
+# keep the data plane resident (never 0 — keep an OOM valve).
+#
+# ONE SOURCE OF TRUTH: the SHARED network knobs (buffer ceilings/floors, tcp_rmem/
+# tcp_wmem, somaxconn, notsent_lowat, backlogs) use EXACTLY the values the base
+# install already applies in scripts/tune_bbr.sh — the boost never silently
+# re-sizes a buffer differently from the baseline. It only ADDS gaming-specific
+# knobs on top (conntrack timeouts, UDP floors, tw_reuse/fin_timeout, swappiness,
+# rmem/wmem_default) plus the live non-sysctl bits (fq qdisc, txqueuelen, MSS
+# clamp, CPU governor, cgroup priority). Buffer CEILINGS stay a moderate 16MB
+# (not 64MB) and the per-socket UDP floor a gentle 64KB: oversized buffers are
+# the classic cause of the "spikes then drops" sawtooth and waste RAM across
+# thousands of flows. 16MB saturates any realistic VPS link, butter-smooth.
 TUNING_SYSCTLS=(
   "net.ipv4.tcp_congestion_control = bbr"
   "net.core.default_qdisc = fq"
@@ -42,15 +49,15 @@ TUNING_SYSCTLS=(
   "net.core.wmem_max = 16777216"
   "net.core.rmem_default = 131072"
   "net.core.wmem_default = 131072"
-  "net.ipv4.tcp_rmem = 4096 131072 16777216"
-  "net.ipv4.tcp_wmem = 4096 131072 16777216"
+  "net.ipv4.tcp_rmem = 4096 87380 16777216"
+  "net.ipv4.tcp_wmem = 4096 65536 16777216"
   "net.ipv4.udp_rmem_min = 65536"
   "net.ipv4.udp_wmem_min = 65536"
   "net.core.netdev_max_backlog = 16384"
-  "net.core.somaxconn = 8192"
+  "net.core.somaxconn = 4096"
   "net.ipv4.tcp_max_syn_backlog = 8192"
   "net.ipv4.tcp_fastopen = 3"
-  "net.ipv4.tcp_notsent_lowat = 16384"
+  "net.ipv4.tcp_notsent_lowat = 131072"
   "net.ipv4.tcp_mtu_probing = 1"
   "net.ipv4.tcp_slow_start_after_idle = 0"
   "net.ipv4.tcp_no_metrics_save = 1"

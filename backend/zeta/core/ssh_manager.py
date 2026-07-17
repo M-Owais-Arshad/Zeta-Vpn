@@ -189,7 +189,7 @@ def online_sessions() -> dict[str, list[str]]:
     res = services.run_privileged(
         ["ssh-conns"],
         ["ss", "-tnHp", "state", "established",
-         "( sport = :22 or sport = :109 or sport = :143 or sport = :149 )"],
+         "( sport = :22 or sport = :109 or sport = :143 )"],
         timeout=10,
     )
     if not res.ok or not res.stdout.strip():
