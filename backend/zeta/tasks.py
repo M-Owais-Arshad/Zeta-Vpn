@@ -4,8 +4,9 @@ Runs inside the panel process as an asyncio task. Every ``stats_poll_seconds`` i
 reads (and resets) both cores' traffic counters, accumulates them into the DB,
 updates each client's concurrent-IP status from the Xray access log, records a
 throughput snapshot for the dashboard chart, and — when a client crosses its
-quota, expiry or IP limit — reloads the affected core so the credential stops
-working.
+quota, expiry or IP limit — cuts that one credential on the LIVE Xray core via
+the HandlerService API (no restart, so no other tunnel drops), falling back to a
+full core reload only for protocols/cores without a live user API.
 """
 
 from __future__ import annotations
@@ -225,7 +226,7 @@ def _enforce_limits(db) -> None:  # noqa: ANN001
             continue
         ib = client.inbound
         if xray.supports_live_user_ops(ib):
-            res = (xray.remove_user_live(ib.tag, client.email) if newly == "cut"
+            res = (xray.remove_user_live(ib, client.email) if newly == "cut"
                    else xray.add_user_live(ib, client))
             if res.ok:
                 xray_live = True

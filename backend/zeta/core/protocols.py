@@ -267,9 +267,5 @@ def spec(protocol: str) -> ProtocolSpec:
         raise ValueError(f"Unsupported protocol: {protocol}") from exc
 
 
-def by_core(core: str) -> list[ProtocolSpec]:
-    return [s for s in REGISTRY.values() if s.core == core]
-
-
 def all_specs() -> list[ProtocolSpec]:
     return list(REGISTRY.values())

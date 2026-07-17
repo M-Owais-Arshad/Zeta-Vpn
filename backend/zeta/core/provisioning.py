@@ -69,15 +69,18 @@ def apply_replace(db: Session, ib: Inbound, client: Client, *,
     core reload for anything the live API can't do or if a live op fails."""
     # Old user on a DIFFERENT live-capable inbound: drop it live there.
     if old_ib is not None and old_ib is not ib and old_email and xray.supports_live_user_ops(old_ib):
-        if xray.remove_user_live(old_ib.tag, old_email).ok:
+        if xray.remove_user_live(old_ib, old_email).ok:
             xray.persist_config(db)
         else:
             apply_core(db, old_ib)
         old_ib = None  # handled
     if xray.supports_live_user_ops(ib):
+        # Same inbound: drop the old entry first, then re-add. If the remove
+        # fails, don't leave a half-applied state — fall through to a full reload.
+        removed_ok = True
         if old_ib is ib and old_email:
-            xray.remove_user_live(ib.tag, old_email)  # same inbound: drop before re-add
-        if xray.add_user_live(ib, client).ok:
+            removed_ok = xray.remove_user_live(ib, old_email).ok
+        if removed_ok and xray.add_user_live(ib, client).ok:
             xray.persist_config(db)
             return
     # Fallback: full reload of the affected core(s).

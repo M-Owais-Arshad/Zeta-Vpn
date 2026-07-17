@@ -68,8 +68,10 @@ An asyncio loop runs every `stats_poll_seconds` (default 5s):
 
 1. `xray api statsquery -reset` returns and zeroes the counters.
 2. Deltas are added to each client/inbound in the DB.
-3. Any client that has just crossed its **quota** or **expiry** triggers a core reload, which drops
-   it from the rendered config — cutting the credential off.
+3. Any client that has just crossed its **quota**, **expiry** or **IP limit** has that one
+   credential cut on the **live Xray core** via the HandlerService API (`xray api rmu`, no
+   restart — so no other tunnel drops); the on-disk config is re-synced. Protocols/cores without
+   a live user API (legacy Shadowsocks, socks/http, sing-box) fall back to a full core reload.
 4. A network snapshot is recorded for the dashboard chart.
 
 ## Subscriptions (`core/links.py`, `core/clientconf.py`, `api/subscription.py`)

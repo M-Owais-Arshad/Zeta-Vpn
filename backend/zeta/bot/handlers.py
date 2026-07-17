@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from .api import Bot, btn, url_btn
+from .api import Bot, btn
 from . import config, provision
 from .db import session
 from .models import BotPayment, BotUser
@@ -213,7 +213,7 @@ def _admin_newssh(bot: Bot, chat: int, text: str) -> None:
         bot.send(chat, "days must be a number."); return
     with session() as db:
         try:
-            acc = provisioning.create_ssh_account(db, username=user, password=pw, expiry_days=days)
+            provisioning.create_ssh_account(db, username=user, password=pw, expiry_days=days)
         except ProvisionError as exc:
             bot.send(chat, f"⚠️ {exc.detail}"); return
     bot.send(chat, f"✅ SSH account <b>{user}</b> created ({days}d). Password: <code>{pw}</code>")

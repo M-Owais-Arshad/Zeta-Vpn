@@ -335,7 +335,6 @@ def update_inbound(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Inbound not found")
 
     data = body.model_dump(exclude_unset=True)
-    old_port = ib.port
     old_fronted = protocols.is_fronted(ib.network, ib.port)
     old_direct = set(ib.extra_ports or []) | (set() if old_fronted else {ib.port})
 

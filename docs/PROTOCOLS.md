@@ -57,5 +57,7 @@ tunnelling only).
 `zeta-ws` proxy and pipes to the local SSH server — so SSH traffic looks like ordinary WebSocket
 traffic to a CDN edge.
 
-> Possible future additions: BadVPN udpgw (UDP-over-SSH for games), OpenVPN, WireGuard, ShadowTLS,
-> AnyTLS. These are not implemented yet.
+**BadVPN udpgw** (UDP-over-SSH for games/voice) ships with the SSH stack — it binds `127.0.0.1:7300`,
+reachable only through an established SSH tunnel, so injector apps can carry game/voice UDP.
+
+> Possible future additions: OpenVPN, WireGuard, ShadowTLS, AnyTLS. These are not implemented yet.

@@ -84,7 +84,7 @@ def _apply_remove(db: Session, ib: Inbound, email: str) -> None:
     """Remove ONE client (by email) from the live core with no restart when
     supported, else a full apply()."""
     if xray.supports_live_user_ops(ib):
-        if xray.remove_user_live(ib.tag, email).ok:
+        if xray.remove_user_live(ib, email).ok:
             xray.persist_config(db)
             return
     _apply(db, ib)
@@ -95,7 +95,7 @@ def _apply_sync(db: Session, ib: Inbound, client: Client, old_email: str | None 
     drop its old entry, then re-add it only if it's still enabled+usable. Falls
     back to a full apply() otherwise or on any failure."""
     if xray.supports_live_user_ops(ib):
-        if xray.remove_user_live(ib.tag, old_email or client.email).ok:
+        if xray.remove_user_live(ib, old_email or client.email).ok:
             if not (client.enabled and client.is_usable):
                 xray.persist_config(db)
                 return

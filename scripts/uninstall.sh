@@ -83,8 +83,19 @@ if [ "$PURGE" -eq 1 ]; then
     done
     ufw delete allow 443/udp >/dev/null 2>&1 || true
   fi
+  # Our per-account SSH-traffic accounting chain (see zeta-privileged ssh-traffic).
+  if command -v iptables >/dev/null 2>&1; then
+    iptables -D OUTPUT -j ZETA_SSHACCT 2>/dev/null || true
+    iptables -F ZETA_SSHACCT 2>/dev/null || true
+    iptables -X ZETA_SSHACCT 2>/dev/null || true
+  fi
+  # Drop any legacy fail2ban jail we may have shipped in an older version, and
+  # only nudge fail2ban if it's actually installed (it isn't part of ZetaVPN any
+  # more — see firewall.sh) so we never bounce an operator's unrelated instance.
   rm -f /etc/fail2ban/jail.d/zeta-sshd.conf
-  systemctl restart fail2ban 2>/dev/null || true
+  if command -v fail2ban-client >/dev/null 2>&1; then
+    systemctl reload fail2ban >/dev/null 2>&1 || true
+  fi
 
   # Dedicated service account (see install.sh step 3b).
   userdel -r zetavpn 2>/dev/null || true

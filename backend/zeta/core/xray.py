@@ -388,44 +388,59 @@ def _api_server() -> str:
     return f"{settings.xray_api_host}:{settings.xray_api_port}"
 
 
-def add_user_live(inbound, client) -> services.CommandResult:  # noqa: ANN001
-    """Add ONE client to the RUNNING xray inbound via HandlerService — no restart.
+def _listener_tags(inbound) -> list[str]:  # noqa: ANN001
+    """Every xray inbound tag this record renders: the primary tag plus one
+    "<tag>@<port>" per extra_port (mirrors build_inbounds). A live user op must
+    touch ALL of them — an inbound with extra_ports is N+1 separate xray inbounds
+    that each carry the full client list."""
+    return [inbound.tag] + [f"{inbound.tag}@{p}" for p in (inbound.extra_ports or [])]
 
-    `adu` wants a full inbound object (tag/listen/port/protocol/settings), so we
-    reuse build_inbounds() and swap in just this one client. It exits 0 even when
-    it adds nothing ("Added 0 user(s)"), so success is confirmed from the output.
+
+def add_user_live(inbound, client) -> services.CommandResult:  # noqa: ANN001
+    """Add ONE client to the RUNNING xray inbound — AND every extra-port listener
+    it renders — via HandlerService, no restart.
+
+    `adu` wants full inbound objects (tag/listen/port/protocol/settings), so we
+    reuse build_inbounds() and swap in just this one client on each. It reports
+    "Added N user(s)"; success = added to all N rendered listeners, else the new
+    user would be unusable on the inbound's extra ports until a restart.
     """
     if not _binary_available():
         return services.CommandResult(False, 1, "", "xray binary unavailable")
-    primary = build_inbounds(inbound)[0]
-    primary = {**primary, "settings": {**primary.get("settings", {}),
-                                       "clients": [_client_entry(inbound.protocol, client)]}}
+    entry = _client_entry(inbound.protocol, client)
+    objs = [{**o, "settings": {**o.get("settings", {}), "clients": [entry]}}
+            for o in build_inbounds(inbound)]
     fd, tmp = tempfile.mkstemp(suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({"inbounds": [primary]}, fh)
+            json.dump({"inbounds": objs}, fh)
         res = services.run([str(settings.xray_bin), "api", "adu", f"--server={_api_server()}", tmp], timeout=10)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
-    if res.ok and "added 1 user" in (res.stdout or "").lower():
+    if res.ok and f"added {len(objs)} user" in (res.stdout or "").lower():
         return services.CommandResult(True, 0, res.stdout, "")
     return services.CommandResult(False, res.code, res.stdout, (res.stderr or res.stdout or "adu failed").strip())
 
 
-def remove_user_live(inbound_tag: str, email: str) -> services.CommandResult:
-    """Remove a user by email from the RUNNING xray inbound — no restart. A
-    'not found' is treated as success: the user is already absent from the core."""
+def remove_user_live(inbound, email: str) -> services.CommandResult:  # noqa: ANN001
+    """Remove a user by email from the RUNNING xray inbound AND every extra-port
+    listener it renders — no restart. Skipping the "<tag>@<port>" listeners would
+    let a cut / expired / over-quota / deleted client keep connecting there (an
+    enforcement bypass). A per-tag 'not found' is success (already absent)."""
     if not _binary_available():
         return services.CommandResult(False, 1, "", "xray binary unavailable")
-    res = services.run(
-        [str(settings.xray_bin), "api", "rmu", f"--server={_api_server()}", f"-tag={inbound_tag}", email],
-        timeout=10,
-    )
-    low = (res.stdout or "").lower()
-    if res.ok and ("removed 1 user" in low or "not found" in low):
-        return services.CommandResult(True, 0, res.stdout, "")
-    return services.CommandResult(False, res.code, res.stdout, (res.stderr or res.stdout or "rmu failed").strip())
+    combined = []
+    for tag in _listener_tags(inbound):
+        res = services.run(
+            [str(settings.xray_bin), "api", "rmu", f"--server={_api_server()}", f"-tag={tag}", email],
+            timeout=10,
+        )
+        low = (res.stdout or "").lower()
+        if not (res.ok and ("removed 1 user" in low or "not found" in low)):
+            return services.CommandResult(False, res.code, res.stdout, (res.stderr or res.stdout or "rmu failed").strip())
+        combined.append(res.stdout)
+    return services.CommandResult(True, 0, "\n".join(combined), "")
 
 
 def persist_config(db: Session) -> None:

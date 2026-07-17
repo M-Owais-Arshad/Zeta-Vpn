@@ -86,7 +86,8 @@ class _Bucket:
 
 class LoginGuard:
     """In-memory, per-identity login throttle. Resets on restart (acceptable for
-    a single-node panel; pair with fail2ban at the OS level for persistence)."""
+    a single-node panel; OS-level SSH banning like fail2ban is intentionally NOT
+    used — see docs/SECURITY.md — to avoid locking out shared-IP tunnel users)."""
 
     def __init__(self, max_attempts: int, lockout_seconds: int) -> None:
         self.max_attempts = max_attempts

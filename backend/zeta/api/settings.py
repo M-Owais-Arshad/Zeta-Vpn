@@ -35,8 +35,9 @@ def _write_ssh_banner(text: str) -> None:
     sshd/dropbear were pointed at this path at install and re-read it per
     connection, so a new message takes effect immediately — no reload. Normalise
     to LF + a trailing newline so it renders cleanly in a terminal. Best-effort:
-    on a box where the file isn't panel-writable (older install) the text is
-    still saved in the DB and applied on the next (re)install."""
+    if the file isn't panel-writable right now (an older install), the text is
+    still saved in the DB and re-seeded to the file at the next panel startup by
+    load_into_settings()."""
     try:
         path = app_settings.ssh_banner_file
         body = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -52,6 +53,12 @@ def load_into_settings(db: Session) -> None:
     for row in db.query(Setting).all():
         if row.key in _LIVE_MIRROR and row.value:
             setattr(app_settings, row.key, row.value)
+    # Re-seed the on-disk SSH banner from the DB, so the message survives a
+    # reinstall / fresh checkout (which recreates an empty banner file) without
+    # the admin having to re-save it.
+    banner = db.get(Setting, "ssh_banner")
+    if banner and banner.value:
+        _write_ssh_banner(banner.value)
 
 
 @router.get("")
