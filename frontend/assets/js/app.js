@@ -1057,6 +1057,7 @@
         "</span><span class=\"cg-right\">" +
           '<span class="muted">' + plural(cls.length, "client") + "</span>" +
           '<button class="btn sm primary" data-addcli="' + ib.id + '">' + IC.plus + " Add</button>" +
+          '<button class="icon-btn danger" data-delib="' + ib.id + '" data-tip="Delete inbound" aria-label="Delete inbound">' + IC.trash + "</button>" +
         "</span></summary>" + body + "</details>";
     }).join("");
 
@@ -1075,6 +1076,21 @@
         e.preventDefault(); e.stopPropagation(); // it's inside <summary>
         var ib = ibs.find(function (x) { return String(x.id) === b.dataset.addcli; });
         if (ib) clientModal(ib, null, reload);
+      };
+    });
+    page.querySelectorAll("[data-delib]").forEach(function (b) {
+      b.onclick = async function (e) {
+        e.preventDefault(); e.stopPropagation(); // it's inside <summary> — don't toggle
+        var ib = ibs.find(function (x) { return String(x.id) === b.dataset.delib; });
+        var name = ib ? (ib.remark || ib.tag) : "this inbound";
+        var okGo = await confirmModal({
+          title: "Delete inbound",
+          message: 'Delete "' + name + '" (port ' + (ib ? ib.port : "?") + ") and ALL its clients? This cannot be undone.",
+          confirm: "Delete inbound",
+        });
+        if (!okGo) return;
+        try { await Z.del("/inbounds/" + b.dataset.delib); toast('Deleted "' + name + '"'); reload(); }
+        catch (err) { toast(err.message, "err"); }
       };
     });
     var q = $("#q-cli");
