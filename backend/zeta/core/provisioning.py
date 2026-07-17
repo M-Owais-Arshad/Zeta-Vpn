@@ -59,6 +59,33 @@ def apply_core(db: Session, ib: Inbound) -> None:
         raise ProvisionError(422, f"Rejected by the {ib.core} core, no changes were applied: {detail}")
 
 
+def apply_replace(db: Session, ib: Inbound, client: Client, *,
+                  old_ib: Inbound | None = None, old_email: str | None = None) -> None:
+    """Apply a bot delete-old + create-new provisioning as ONE change.
+
+    When the target is an Xray VLESS/VMess/Trojan inbound, do it on the LIVE core
+    via HandlerService — remove the old user, add the new one, NO restart — so a
+    signup/renewal never drops the other users' tunnels. Falls back to a full
+    core reload for anything the live API can't do or if a live op fails."""
+    # Old user on a DIFFERENT live-capable inbound: drop it live there.
+    if old_ib is not None and old_ib is not ib and old_email and xray.supports_live_user_ops(old_ib):
+        if xray.remove_user_live(old_ib.tag, old_email).ok:
+            xray.persist_config(db)
+        else:
+            apply_core(db, old_ib)
+        old_ib = None  # handled
+    if xray.supports_live_user_ops(ib):
+        if old_ib is ib and old_email:
+            xray.remove_user_live(ib.tag, old_email)  # same inbound: drop before re-add
+        if xray.add_user_live(ib, client).ok:
+            xray.persist_config(db)
+            return
+    # Fallback: full reload of the affected core(s).
+    apply_core(db, ib)
+    if old_ib is not None and old_ib is not ib and old_ib.core != ib.core:
+        apply_core(db, old_ib)
+
+
 def flush_or_conflict(db: Session, email: str) -> None:
     try:
         db.flush()

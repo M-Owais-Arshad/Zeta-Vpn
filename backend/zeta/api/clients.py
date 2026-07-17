@@ -68,6 +68,43 @@ def _apply(db: Session, ib: Inbound) -> None:
         )
 
 
+def _apply_add(db: Session, ib: Inbound, client: Client) -> None:
+    """Add ONE client to the live core WITHOUT restarting when the protocol
+    supports it (Xray VLESS/VMess/Trojan via HandlerService) — so creating an
+    account never drops the other users' tunnels. Falls back to a full apply()
+    (write + restart) for everything else, or if the live add fails."""
+    if xray.supports_live_user_ops(ib):
+        if xray.add_user_live(ib, client).ok:
+            xray.persist_config(db)  # keep the on-disk config in sync, no restart
+            return
+    _apply(db, ib)
+
+
+def _apply_remove(db: Session, ib: Inbound, email: str) -> None:
+    """Remove ONE client (by email) from the live core with no restart when
+    supported, else a full apply()."""
+    if xray.supports_live_user_ops(ib):
+        if xray.remove_user_live(ib.tag, email).ok:
+            xray.persist_config(db)
+            return
+    _apply(db, ib)
+
+
+def _apply_sync(db: Session, ib: Inbound, client: Client, old_email: str | None = None) -> None:
+    """Re-sync ONE edited client on the live core with no restart when supported:
+    drop its old entry, then re-add it only if it's still enabled+usable. Falls
+    back to a full apply() otherwise or on any failure."""
+    if xray.supports_live_user_ops(ib):
+        if xray.remove_user_live(ib.tag, old_email or client.email).ok:
+            if not (client.enabled and client.is_usable):
+                xray.persist_config(db)
+                return
+            if xray.add_user_live(ib, client).ok:
+                xray.persist_config(db)
+                return
+    _apply(db, ib)
+
+
 def _gen_password(ib: Inbound) -> str:
     """Generate a credential password. Shadowsocks-2022 needs a base64-encoded
     PSK of the cipher's exact key length; everything else gets a URL-safe token."""
@@ -166,7 +203,7 @@ def create_client(
     )
     db.add(client)
     _flush_or_409(db, body.email)
-    _apply(db, ib)
+    _apply_add(db, ib, client)
     db.commit()
     db.refresh(client)
     return client
@@ -183,6 +220,7 @@ def update_client(
     ib = _get_inbound(db, inbound_id)
     client = _get_client(db, inbound_id, client_id)
     data = body.model_dump(exclude_unset=True)
+    old_email = client.email  # capture before any change, for the live re-sync
 
     if "email" in data and data["email"] != client.email:
         if db.query(Client).filter(Client.email == data["email"], Client.id != client.id).first():
@@ -205,7 +243,7 @@ def update_client(
         setattr(client, field, value)
 
     _flush_or_409(db, client.email)
-    _apply(db, ib)
+    _apply_sync(db, ib, client, old_email=old_email)
     db.commit()
     db.refresh(client)
     return client
@@ -220,9 +258,10 @@ def delete_client(
 ) -> dict:
     ib = _get_inbound(db, inbound_id)
     client = _get_client(db, inbound_id, client_id)
+    email = client.email  # capture before delete for the live removal
     db.delete(client)
     db.flush()
-    _apply(db, ib)
+    _apply_remove(db, ib, email)
     db.commit()
     return {"ok": True}
 

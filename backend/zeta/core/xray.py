@@ -368,6 +368,76 @@ def _live_config_differs(config: dict) -> bool:
     return json.dumps(current, sort_keys=True) != json.dumps(config, sort_keys=True)
 
 
+# --------------------------------------------------------------------------- #
+# live user management (HandlerService — add/remove ONE user with no restart)
+# --------------------------------------------------------------------------- #
+
+# Protocols whose users Xray can add/remove on the RUNNING process via
+# HandlerService (`xray api adu`/`rmu`), so a single-client change drops NO
+# tunnels. Everything else (legacy single-user Shadowsocks, socks/http account
+# lists, dokodemo, and every sing-box inbound) falls back to a full restart.
+_LIVE_USER_PROTOCOLS = {"vless", "vmess", "trojan"}
+
+
+def supports_live_user_ops(inbound) -> bool:  # noqa: ANN001
+    """True if a single add/remove on this inbound can be done without a restart."""
+    return inbound.core == "xray" and inbound.protocol in _LIVE_USER_PROTOCOLS and _binary_available()
+
+
+def _api_server() -> str:
+    return f"{settings.xray_api_host}:{settings.xray_api_port}"
+
+
+def add_user_live(inbound, client) -> services.CommandResult:  # noqa: ANN001
+    """Add ONE client to the RUNNING xray inbound via HandlerService — no restart.
+
+    `adu` wants a full inbound object (tag/listen/port/protocol/settings), so we
+    reuse build_inbounds() and swap in just this one client. It exits 0 even when
+    it adds nothing ("Added 0 user(s)"), so success is confirmed from the output.
+    """
+    if not _binary_available():
+        return services.CommandResult(False, 1, "", "xray binary unavailable")
+    primary = build_inbounds(inbound)[0]
+    primary = {**primary, "settings": {**primary.get("settings", {}),
+                                       "clients": [_client_entry(inbound.protocol, client)]}}
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"inbounds": [primary]}, fh)
+        res = services.run([str(settings.xray_bin), "api", "adu", f"--server={_api_server()}", tmp], timeout=10)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    if res.ok and "added 1 user" in (res.stdout or "").lower():
+        return services.CommandResult(True, 0, res.stdout, "")
+    return services.CommandResult(False, res.code, res.stdout, (res.stderr or res.stdout or "adu failed").strip())
+
+
+def remove_user_live(inbound_tag: str, email: str) -> services.CommandResult:
+    """Remove a user by email from the RUNNING xray inbound — no restart. A
+    'not found' is treated as success: the user is already absent from the core."""
+    if not _binary_available():
+        return services.CommandResult(False, 1, "", "xray binary unavailable")
+    res = services.run(
+        [str(settings.xray_bin), "api", "rmu", f"--server={_api_server()}", f"-tag={inbound_tag}", email],
+        timeout=10,
+    )
+    low = (res.stdout or "").lower()
+    if res.ok and ("removed 1 user" in low or "not found" in low):
+        return services.CommandResult(True, 0, res.stdout, "")
+    return services.CommandResult(False, res.code, res.stdout, (res.stderr or res.stdout or "rmu failed").strip())
+
+
+def persist_config(db: Session) -> None:
+    """Write the regenerated config to disk WITHOUT restarting, so a live
+    adu/rmu change survives the next restart/reboot while dropping no tunnels.
+    Best-effort: a write failure just means the next restart rebuilds from the DB."""
+    try:
+        write_config(generate_config(db))
+    except OSError:
+        pass
+
+
 def validate_config(config: dict | None = None) -> services.CommandResult:
     """Ask xray to test a config file without applying it."""
     if not _binary_available():

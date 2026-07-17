@@ -165,7 +165,13 @@ def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001
 
 
 def _enforce_limits(db) -> None:  # noqa: ANN001
-    """Reload cores if any enabled client just became unusable (quota/expiry)."""
+    """Bring the cores in line when a client just became unusable/usable
+    (quota / expiry / ip-limit). Xray VLESS/VMess/Trojan transitions are applied
+    to the LIVE process via HandlerService — that one user is added/removed with
+    NO restart, so no OTHER tunnel is dropped (this is what stopped a single
+    over-limit client from restart-storming the whole core). Anything the live
+    API can't do (sing-box, legacy single-user protocols, or a failed live op)
+    falls back to a full restart."""
     enabled = db.query(Client).filter(Client.enabled.is_(True)).all()
     # Prune ids of clients deleted/disabled since we last cut them, so a reused
     # SQLite rowid can never masquerade as a previously-cut client.
@@ -174,19 +180,36 @@ def _enforce_limits(db) -> None:  # noqa: ANN001
     for _gone in [cid for cid in _ip_ok_since if cid not in live_ids]:
         _ip_ok_since.pop(_gone, None)
 
-    newly_cut: dict[str, bool] = {}
+    xray_restart = False   # a transition the live API couldn't do -> full apply
+    xray_live = False      # at least one live add/remove landed -> persist config
+    singbox_restart = False
     for client in enabled:
+        newly = None
         if not client.is_usable and client.id not in _cut_clients:
-            _cut_clients.add(client.id)
-            newly_cut[client.inbound.core] = True
+            _cut_clients.add(client.id); newly = "cut"
         elif client.is_usable and client.id in _cut_clients:
-            _cut_clients.discard(client.id)  # e.g. quota reset / renewed
-            newly_cut[client.inbound.core] = True
+            _cut_clients.discard(client.id); newly = "restore"  # quota reset / renewed
+        if newly is None:
+            continue
+        ib = client.inbound
+        if xray.supports_live_user_ops(ib):
+            res = (xray.remove_user_live(ib.tag, client.email) if newly == "cut"
+                   else xray.add_user_live(ib, client))
+            if res.ok:
+                xray_live = True
+                continue
+            xray_restart = True   # live op failed -> fall back to a restart
+        elif ib.core == "singbox":
+            singbox_restart = True
+        else:
+            xray_restart = True   # non-live xray protocol (legacy SS / socks / http)
 
-    if newly_cut.get("xray"):
+    if xray_restart:
         log.info("Reloading Xray to enforce client limits")
-        xray.apply(db)
-    if newly_cut.get("singbox"):
+        xray.apply(db)                 # full write + restart (rebuilds all state)
+    elif xray_live:
+        xray.persist_config(db)        # sync the on-disk config, NO restart
+    if singbox_restart:
         log.info("Reloading sing-box to enforce client limits")
         singbox.apply(db)
 
