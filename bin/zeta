@@ -44,18 +44,62 @@ cmd_info() {
 }
 
 cmd_update() {
-  msg "Updating ZetaVPN"
+  [ "$(id -u)" -eq 0 ] || die "Run as root (sudo zeta update)."
+  local full=0
+  [ "${1:-}" = "--full" ] && full=1
+  local data="${ZETA_DATA:-${ZETA_HOME}/data}" env="${ZETA_ENV:-${ZETA_HOME}/.env}"
+
+  # 1. Safety backup. The DB + secrets are gitignored so git never touches them,
+  #    but a timestamped copy is cheap insurance so an update can NEVER lose an
+  #    operator's accounts/settings.
+  local bdir="/var/backups/zetavpn/pre-update"
+  mkdir -p "$bdir"
+  cp -a "$data" "$bdir/data" 2>/dev/null || true
+  cp "$env" "$bdir/env" 2>/dev/null || true
+
+  # 2. Fetch the latest release. reset --hard (not pull) so a diverged / locally
+  #    edited checkout can't block the update; data/ and .env are gitignored and
+  #    survive untouched — no user data is ever deleted.
+  local old_rev="" new_rev="" branch="${ZETA_BRANCH:-main}"
   if [ -d "${ZETA_HOME}/.git" ]; then
-    git -C "$ZETA_HOME" pull --ff-only || warn "git pull failed"
+    old_rev="$(git -C "$ZETA_HOME" rev-parse --short HEAD 2>/dev/null || echo none)"
+    if git -C "$ZETA_HOME" fetch --depth 1 origin "$branch" 2>/dev/null \
+       && git -C "$ZETA_HOME" reset --hard "origin/${branch}" >/dev/null 2>&1; then
+      new_rev="$(git -C "$ZETA_HOME" rev-parse --short HEAD)"
+      [ "$old_rev" = "$new_rev" ] && [ "$full" = 0 ] && { ok "Already up to date (${new_rev})."; return 0; }
+      msg "Source ${old_rev} -> ${new_rev}"
+    else
+      warn "git fetch/reset failed — leaving the current source in place"
+    fi
   else
-    warn "Not a git checkout — reinstalling deps only."
+    warn "Not a git checkout — refreshing deps/helpers from the current source only."
   fi
-  "${ZETA_HOME}/venv/bin/pip" install --quiet -r "${ZETA_HOME}/backend/requirements.txt"
-  # Rewrite the units the same way install.sh does — the repo units hardcode
-  # /opt/zetavpn and --listen :8880, so installing them verbatim would undo a
-  # custom ZETA_HOME / WS_PORT deployment. Source the persisted port from .env.
+  chmod +x "${ZETA_HOME}/scripts/"*.sh "${ZETA_HOME}/bin/zeta" 2>/dev/null || true
+
+  # --full: re-run the installer (the supported re-entry point — it keeps .env +
+  #  the DB, re-applies firewall / SSH stack / nginx / tuning, and restarts the
+  #  cores). Use this after a release that changes system config; users briefly
+  #  reconnect.
+  if [ "$full" = 1 ]; then
+    warn "Full update: re-applying system config (firewall/SSH/nginx) — users reconnect"
+    ZETA_YES=1 bash "${ZETA_HOME}/install.sh" --yes
+    ok "Full update complete${new_rev:+ ($new_rev)}"
+    return 0
+  fi
+
+  # 3. Python deps (may have changed between releases).
+  "${ZETA_HOME}/venv/bin/pip" install --quiet -r "${ZETA_HOME}/backend/requirements.txt" 2>/dev/null \
+    || warn "pip step reported problems"
+
+  # 4. Re-install the pieces that live OUTSIDE ZETA_HOME (the root helpers + CLI)
+  #    so a fix to them actually lands. daemon-reload picks up unit changes
+  #    without restarting the running data-plane units.
+  install -m 0755 -o root -g root "${ZETA_HOME}/scripts/zeta-privileged" /usr/local/sbin/zeta-privileged 2>/dev/null || true
+  install -m 0755 -o root -g root "${ZETA_HOME}/scripts/zeta-tuning.sh"   /usr/local/sbin/zeta-tuning     2>/dev/null || true
+  install -m 0755 -o root -g root "${ZETA_HOME}/scripts/zeta-tgproxy.sh"  /usr/local/sbin/zeta-tgproxy    2>/dev/null || true
+  install -m 0755 "${ZETA_HOME}/bin/zeta" /usr/local/bin/zeta 2>/dev/null || true
   local ws_port=8880
-  [ -f "${ZETA_HOME}/.env" ] && ws_port="$(sed -n 's/^ZETA_WS_PORT=//p' "${ZETA_HOME}/.env" | tail -1)"
+  [ -f "$env" ] && ws_port="$(sed -n 's/^ZETA_WS_PORT=//p' "$env" | tail -1)"
   ws_port="${ws_port:-8880}"
   local tmp_units; tmp_units="$(mktemp -d)"
   for f in "${ZETA_HOME}/systemd/"zeta-*.service; do
@@ -65,8 +109,15 @@ cmd_update() {
   install -m 0644 "${tmp_units}/"zeta-*.service /etc/systemd/system/ 2>/dev/null || true
   rm -rf "$tmp_units"
   systemctl daemon-reload
-  cmd_restart all
-  ok "Update complete"
+
+  # 5. Restart ONLY the panel (control plane). This reloads the new code + runs
+  #    additive DB migrations WITHOUT dropping a single tunnel: the proxy cores
+  #    (xray/sing-box) and the whole SSH stack keep running. The panel re-applies
+  #    a core config only when it actually changes (apply() is a no-op otherwise),
+  #    so live users stay connected across the update — the whole point.
+  systemctl restart zeta-panel
+  ok "Update complete${new_rev:+ ($new_rev)} — panel reloaded, live tunnels kept."
+  msg "If this release changed the firewall / SSH stack / nginx, run 'sudo zeta update --full' to apply those (brief reconnect)."
 }
 
 cmd_backup() {
@@ -148,7 +199,7 @@ case "${1:-menu}" in
   status)         cmd_status ;;
   restart)        cmd_restart "${2:-all}" ;;
   info)           cmd_info ;;
-  update)         cmd_update ;;
+  update)         cmd_update "${2:-}" ;;
   backup)         cmd_backup "${2:-}" ;;
   expire-check)   cmd_expire_check ;;
   uninstall)      cmd_uninstall ;;
