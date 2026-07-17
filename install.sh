@@ -85,7 +85,12 @@ if [ -d "${SELF_DIR}/backend" ] && [ -d "${SELF_DIR}/frontend" ]; then
 else
   if [ -d "${ZETA_HOME}/.git" ]; then
     msg "Updating existing ZetaVPN checkout"
-    git -C "$ZETA_HOME" fetch --depth 1 origin "$ZETA_BRANCH" && git -C "$ZETA_HOME" reset --hard "origin/${ZETA_BRANCH}"
+    # Fetch from the public HTTPS URL (origin may be an SSH remote with no key
+    # here) and `-c safe.directory` so git-as-root doesn't refuse a zetavpn-owned
+    # checkout ("dubious ownership"). data/ + .env are gitignored and survive.
+    git -c "safe.directory=${ZETA_HOME}" -C "$ZETA_HOME" fetch --depth 1 "$ZETA_REPO" "$ZETA_BRANCH" \
+      && git -c "safe.directory=${ZETA_HOME}" -C "$ZETA_HOME" reset --hard FETCH_HEAD \
+      || warn "Could not refresh source from git — using the existing checkout."
   else
     msg "Cloning ${ZETA_REPO} (${ZETA_BRANCH})"
     rm -rf "$ZETA_HOME"

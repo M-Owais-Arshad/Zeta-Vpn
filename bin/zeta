@@ -61,11 +61,16 @@ cmd_update() {
   #    edited checkout can't block the update; data/ and .env are gitignored and
   #    survive untouched — no user data is ever deleted.
   local old_rev="" new_rev="" branch="${ZETA_BRANCH:-main}"
+  local repo="${ZETA_REPO:-https://github.com/M-Owais-Arshad/Zeta-Vpn.git}"
   if [ -d "${ZETA_HOME}/.git" ]; then
-    old_rev="$(git -C "$ZETA_HOME" rev-parse --short HEAD 2>/dev/null || echo none)"
-    if git -C "$ZETA_HOME" fetch --depth 1 origin "$branch" 2>/dev/null \
-       && git -C "$ZETA_HOME" reset --hard "origin/${branch}" >/dev/null 2>&1; then
-      new_rev="$(git -C "$ZETA_HOME" rev-parse --short HEAD)"
+    # Fetch from the public HTTPS URL explicitly (origin may be an SSH remote the
+    # box has no key for) and reset to it. `-c safe.directory` avoids git's
+    # "dubious ownership" refusal when run as root over a zetavpn-owned checkout.
+    local -a G=(git -c "safe.directory=${ZETA_HOME}" -C "$ZETA_HOME")
+    old_rev="$("${G[@]}" rev-parse --short HEAD 2>/dev/null || echo none)"
+    if "${G[@]}" fetch --depth 1 "$repo" "$branch" 2>/dev/null \
+       && "${G[@]}" reset --hard FETCH_HEAD >/dev/null 2>&1; then
+      new_rev="$("${G[@]}" rev-parse --short HEAD)"
       [ "$old_rev" = "$new_rev" ] && [ "$full" = 0 ] && { ok "Already up to date (${new_rev})."; return 0; }
       msg "Source ${old_rev} -> ${new_rev}"
     else
