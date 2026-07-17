@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     # The address clients connect to. Defaults to the server's own IP at runtime.
     server_address: str = ""
     server_domain: str = ""
+    # Where the panel's TLS cert lives (real Let's Encrypt cert if a domain was
+    # configured, else a self-signed one). Used as the default cert for a
+    # direct-bind (non-nginx-fronted) TLS inbound so it works exactly like 3x-ui
+    # — xray terminates TLS itself — without the admin hand-entering cert paths.
+    cert_dir: Path = Path("/etc/zetavpn/certs")
 
     # --- Xray-core -----------------------------------------------------------
     xray_bin: Path = Path("/usr/local/bin/xray")

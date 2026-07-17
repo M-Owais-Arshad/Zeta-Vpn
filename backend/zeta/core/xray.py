@@ -125,14 +125,20 @@ def build_stream_settings(inbound: Inbound) -> dict:
     # --- security ---
     if security == "tls":
         tls = ss.get("tls", {})
+        # Default to the panel's own cert so a direct-bind TLS inbound (xray
+        # terminates TLS itself, like 3x-ui) works out of the box without the
+        # admin pasting cert paths. install.sh guarantees a cert exists here
+        # (real if a domain was set, else self-signed).
+        cert_file = tls.get("certificateFile") or str(settings.cert_dir / "fullchain.pem")
+        key_file = tls.get("keyFile") or str(settings.cert_dir / "privkey.pem")
         stream["tlsSettings"] = {
             "serverName": tls.get("serverName", settings.server_domain),
             "alpn": tls.get("alpn", ["h2", "http/1.1"]),
             "minVersion": tls.get("minVersion", "1.2"),
             "certificates": [
                 {
-                    "certificateFile": tls.get("certificateFile", ""),
-                    "keyFile": tls.get("keyFile", ""),
+                    "certificateFile": cert_file,
+                    "keyFile": key_file,
                 }
             ],
         }
