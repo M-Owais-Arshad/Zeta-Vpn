@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -100,11 +101,39 @@ if ASSETS.is_dir():
     app.mount(f"{BASE}/assets", StaticFiles(directory=str(ASSETS)), name="assets")
 
 
-def _page(name: str) -> FileResponse | JSONResponse:
+_ASSET_FILES = ("js/app.js", "js/api.js", "css/zeta.css")
+
+
+def _asset_version() -> str:
+    """Cache-busting token that changes whenever a frontend asset changes.
+
+    index.html hardcodes ``?v=<x.y.z>`` on its <script>/<link> tags; if that
+    string never changes, a panel update leaves the browser (and any CDN) serving
+    a STALE app.js under the assets' 4h max-age — the "new feature/button missing
+    after update" symptom. Deriving the token from the assets' newest mtime busts
+    the cache automatically on every deploy."""
+    try:
+        latest = max(
+            (ASSETS / f).stat().st_mtime for f in _ASSET_FILES if (ASSETS / f).is_file()
+        )
+        return f"{settings.version}-{int(latest)}"
+    except (OSError, ValueError):
+        return settings.version
+
+
+def _page(name: str) -> HTMLResponse | JSONResponse:
     path = FRONTEND / name
     if not path.is_file():
         return JSONResponse({"detail": f"{name} not found — frontend not installed"}, status_code=404)
-    return FileResponse(str(path))
+    try:
+        html = path.read_text(encoding="utf-8")
+    except OSError:
+        return JSONResponse({"detail": f"{name} unreadable"}, status_code=500)
+    # Rewrite each asset's ?v=... to the per-deploy token so a stale app.js/CSS
+    # can't survive an update. index.html itself is returned uncached (HTMLResponse
+    # sets no max-age), so the fresh token is always seen.
+    html = re.sub(r"(\.(?:js|css))\?v=[0-9A-Za-z.\-]+", rf"\1?v={_asset_version()}", html)
+    return HTMLResponse(html)
 
 
 @app.get(f"{BASE}/", include_in_schema=False)
