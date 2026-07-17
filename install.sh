@@ -16,7 +16,12 @@
 set -euo pipefail
 
 # Resolve where this script lives so we can find the rest of the repo.
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# BASH_SOURCE[0] is UNSET when bootstrapped via `curl | bash` (stdin has no
+# path) — under `set -u` that aborts the whole install on line 1. Fall back to
+# $0, and tolerate a non-directory (piped) source: SELF_DIR then just won't hold
+# a local checkout, so the fetch step clones the repo instead. Both documented
+# forms — `bash <(curl …)` and `curl … | bash` — now work.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 
 ZETA_HOME="${ZETA_HOME:-/opt/zetavpn}"
 ZETA_REPO="${ZETA_REPO:-https://github.com/M-Owais-Arshad/Zeta-Vpn.git}"
