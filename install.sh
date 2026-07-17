@@ -196,7 +196,18 @@ ok "Least-privilege sudo rule installed (/etc/sudoers.d/zetavpn-panel)"
 if [ -n "${ZETA_DOMAIN:-}" ]; then
   ZETA_DOMAIN="$ZETA_DOMAIN" bash "${ZETA_HOME}/scripts/install_ssl.sh" || warn "SSL step failed; continuing without a cert."
 fi
-PANEL_PORT="$PANEL_PORT" WS_PORT="$WS_PORT" ZETA_DOMAIN="${ZETA_DOMAIN:-}" bash "${ZETA_HOME}/scripts/install_nginx.sh"
+# Front :80/:443 with HAProxy so raw SSH, WebSocket and TLS all share those
+# ports (gaming/free-net layout). nginx moves to loopback 8080/8443 behind it.
+# If HAProxy can't come up, revert nginx to the public ports so 80/443 are never
+# left unbound — the box still works, just without the raw-SSH-on-80/443 sharing.
+nginx_env() { PANEL_PORT="$PANEL_PORT" WS_PORT="$WS_PORT" ZETA_DOMAIN="${ZETA_DOMAIN:-}" "$@"; }
+if ZETA_FRONT_LOOPBACK=1 nginx_env bash "${ZETA_HOME}/scripts/install_nginx.sh" \
+   && SSH_PORT=22 bash "${ZETA_HOME}/scripts/install_haproxy.sh"; then
+  ok "Port multiplexer active — raw SSH + WS + TLS share :80 and :443"
+else
+  warn "HAProxy multiplexer unavailable — nginx will own :80/:443 directly"
+  nginx_env bash "${ZETA_HOME}/scripts/install_nginx.sh" || warn "nginx step reported problems."
+fi
 PANEL_PORT="$PANEL_PORT" DROPBEAR_PORT_MAIN="$DROPBEAR_PORT_MAIN" DROPBEAR_PORT_ALT="$DROPBEAR_PORT_ALT" \
   STUNNEL_PORT="$STUNNEL_PORT" WS_PORT="$WS_PORT" bash "${ZETA_HOME}/scripts/firewall.sh" \
   || warn "Firewall step reported problems."

@@ -13,6 +13,20 @@ WS_PORT="${WS_PORT:-8880}"
 DOMAIN="${ZETA_DOMAIN:-}"
 WS_PATH="${WS_PATH:-/zeta-ws}"
 
+# When HAProxy fronts :80/:443 (protocol multiplexing so raw SSH, WS and TLS all
+# share those ports like the reference panels), nginx moves to loopback and
+# reads the real client IP from the PROXY-protocol header HAProxy prepends.
+# Otherwise nginx binds the public ports directly (the classic layout).
+if [ "${ZETA_FRONT_LOOPBACK:-0}" = "1" ]; then
+  L80="127.0.0.1:8080 proxy_protocol"
+  L443="127.0.0.1:8443 ssl http2 proxy_protocol"
+  REAL_IP=$'\n    set_real_ip_from 127.0.0.1;\n    real_ip_header proxy_protocol;'
+else
+  L80="80"
+  L443="443 ssl http2"
+  REAL_IP=""
+fi
+
 msg "Installing nginx reverse proxy"
 apt_install nginx
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
@@ -157,22 +171,38 @@ ROOT_LOCATION_TLS80=$(cat <<CONF
 CONF
 )
 
-if [ -n "$DOMAIN" ] && [ -f "${ZETA_CERT_DIR}/fullchain.pem" ]; then
-  msg "Configuring HTTPS vhost for ${DOMAIN}"
+SRVNAME="${DOMAIN:-_}"
+HAS_REAL_CERT=0
+[ -n "$DOMAIN" ] && [ -f "${ZETA_CERT_DIR}/fullchain.pem" ] && HAS_REAL_CERT=1
+# HAProxy-fronted (loopback) mode needs BOTH an :8080 and an :8443 backend, and
+# free-net clients live on TLS/443 — so guarantee a cert: use the real one if a
+# domain issued it, else generate a self-signed cert (fine for WS-over-TLS
+# clients behind a CDN or with allowInsecure).
+if [ "${ZETA_FRONT_LOOPBACK:-0}" = "1" ] && [ ! -f "${ZETA_CERT_DIR}/fullchain.pem" ]; then
+  msg "Generating a self-signed cert for TLS on :443 (no domain cert present)"
+  mkdir -p "$ZETA_CERT_DIR"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=${DOMAIN:-zeta.local}" \
+    -keyout "${ZETA_CERT_DIR}/privkey.pem" -out "${ZETA_CERT_DIR}/fullchain.pem" >/dev/null 2>&1 || true
+  id -u zetavpn >/dev/null 2>&1 && chown -R zetavpn:zetavpn "$ZETA_CERT_DIR" 2>/dev/null || true
+fi
+# Only redirect :80 non-WS traffic to HTTPS when we have a REAL cert (a browser
+# would choke on a self-signed redirect); otherwise serve plain HTTP on :80.
+if [ "$HAS_REAL_CERT" = 1 ]; then ROOT80="$ROOT_LOCATION_TLS80"; else ROOT80="$ROOT_LOCATION_HTTP"; fi
+
+if { [ "${ZETA_FRONT_LOOPBACK:-0}" = "1" ] || [ "$HAS_REAL_CERT" = 1 ]; } \
+   && [ -f "${ZETA_CERT_DIR}/fullchain.pem" ]; then
+  msg "Configuring :80 + :443 vhosts (${DOMAIN:-self-signed})"
   cat > /etc/nginx/conf.d/zeta.conf <<CONF
 server {
-    listen 80;
-    server_name ${DOMAIN};
-    # WS-family inbounds, the SSH-WS path, and any bug-host WebSocket handshake
-    # stay reachable on plain :80 even in TLS mode (most-specific location wins);
-    # a normal browser request (no Upgrade header) is redirected to HTTPS.
+    listen ${L80} default_server;
+    server_name ${SRVNAME};${REAL_IP}
     include ${ZETA_INBOUNDS_INCLUDE};
 ${WS_LOCATION}
-${ROOT_LOCATION_TLS80}
+${ROOT80}
 }
 server {
-    listen 443 ssl http2;
-    server_name ${DOMAIN};
+    listen ${L443};
+    server_name ${SRVNAME};${REAL_IP}
     ssl_certificate     ${ZETA_CERT_DIR}/fullchain.pem;
     ssl_certificate_key ${ZETA_CERT_DIR}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -187,8 +217,8 @@ else
   warn "No domain/cert — serving panel + WS over plain HTTP (port 80)."
   cat > /etc/nginx/conf.d/zeta.conf <<CONF
 server {
-    listen 80 default_server;
-    server_name _;
+    listen ${L80} default_server;
+    server_name _;${REAL_IP}
     include ${ZETA_INBOUNDS_INCLUDE};
 ${WS_LOCATION}
 ${ROOT_LOCATION_HTTP}

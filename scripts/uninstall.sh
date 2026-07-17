@@ -63,6 +63,10 @@ if [ "$PURGE" -eq 1 ]; then
   # that made them useful for tunnelling is gone.
   systemctl disable --now dropbear 2>/dev/null || true
   systemctl disable --now stunnel4 2>/dev/null || true
+  # HAProxy port multiplexer (fronts :80/:443). Stop it and drop our config so
+  # nginx can take the public ports again; the package is left installed.
+  systemctl disable --now haproxy 2>/dev/null || true
+  rm -f /etc/haproxy/haproxy.cfg
   rm -f /etc/stunnel/stunnel.conf /etc/stunnel/stunnel.pem
   # Revert install_ssh_stack.sh's sed edits to the dropbear package config
   # (harmless while the service is disabled, but leaving it means a later
