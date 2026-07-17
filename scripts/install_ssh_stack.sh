@@ -73,7 +73,16 @@ if [ -f /etc/default/dropbear ]; then
   fi
 fi
 systemctl enable dropbear >/dev/null 2>&1 || true
-systemctl restart dropbear || warn "dropbear failed to start"
+# The dropbear package's postinst starts the daemon on its default port 22,
+# which collides with OpenSSH and fails immediately; a few of those failures
+# trip systemd's start-rate-limit ("start request repeated too quickly") so our
+# restart below is REFUSED and dropbear ends up failed even though the config is
+# correct. Clear that accumulated failure state first (and retry once) so it
+# reliably comes up on the configured ports.
+systemctl reset-failed dropbear >/dev/null 2>&1 || true
+systemctl restart dropbear \
+  || { sleep 2; systemctl reset-failed dropbear >/dev/null 2>&1; systemctl restart dropbear; } \
+  || warn "dropbear failed to start"
 ok "Dropbear listening on ${DROPBEAR_PORT_MAIN}, ${DROPBEAR_PORT_ALT}"
 
 # ---- stunnel (SSH-over-SSL/TLS) ----
