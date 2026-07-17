@@ -37,7 +37,7 @@ if "$ACME" --issue -d "$DOMAIN" --standalone --keylength ec-256 --force; then
   "$ACME" --install-cert -d "$DOMAIN" --ecc \
     --fullchain-file "${ZETA_CERT_DIR}/fullchain.pem" \
     --key-file "${ZETA_CERT_DIR}/privkey.pem" \
-    --reloadcmd "chown zetavpn:zetavpn '${ZETA_CERT_DIR}'/*.pem 2>/dev/null; chmod 600 '${ZETA_CERT_DIR}'/*.pem 2>/dev/null; systemctl restart zeta-xray zeta-singbox nginx 2>/dev/null || true"
+    --reloadcmd "chown zetavpn:zetavpn '${ZETA_CERT_DIR}'/*.pem 2>/dev/null; chmod 600 '${ZETA_CERT_DIR}'/*.pem 2>/dev/null; systemctl restart zeta-xray 2>/dev/null; sleep 2; systemctl restart zeta-singbox 2>/dev/null; systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true"
   chown zetavpn:zetavpn "${ZETA_CERT_DIR}"/*.pem 2>/dev/null || true
   chmod 600 "${ZETA_CERT_DIR}/privkey.pem"
   ok "Certificate installed to ${ZETA_CERT_DIR}"

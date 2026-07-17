@@ -183,11 +183,27 @@ def apply(db: Session) -> services.CommandResult:
         if not check.ok:
             detail = (check.stderr or check.stdout or "sing-box rejected the generated config").strip()
             return services.CommandResult(False, check.code, check.stdout, detail)
-    write_config(config)
     # Enable so a legitimately-configured sing-box survives reboots (the install
     # ships it disabled to avoid the empty-config idle waste).
     services.systemctl("enable", settings.singbox_service)
+    # Skip the restart (which drops every live QUIC/Hysteria2/TUIC tunnel) when
+    # the regenerated config equals what's already running — same rationale as
+    # xray.apply(): never restart for a change that doesn't alter the config.
+    if not _live_config_differs(config):
+        return services.CommandResult(True, 0, "[unchanged: core not restarted]", "")
+    write_config(config)
     return services.restart(settings.singbox_service)
+
+
+def _live_config_differs(config: dict) -> bool:
+    """True if `config` differs from the config currently on disk (or none is
+    readable). Lets :func:`apply` skip a needless core restart — which would sever
+    every live tunnel — when the regenerated config equals the running one."""
+    try:
+        current = json.loads(settings.singbox_config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return json.dumps(current, sort_keys=True) != json.dumps(config, sort_keys=True)
 
 
 def validate_config(config: dict | None = None) -> services.CommandResult:

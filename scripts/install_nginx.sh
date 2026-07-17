@@ -38,6 +38,28 @@ gzip_min_length 512;
 gzip_types text/css application/javascript text/javascript application/json text/plain image/svg+xml;
 CONF
 
+# WebSocket / SSH-over-WS capacity. EVERY WS-family inbound and the SSH-over-WS
+# front are proxied through nginx, and each live tunnel holds 2 slots (the client
+# connection + the 127.0.0.1 upstream). Debian's stock `worker_connections 768`
+# caps that at ~384 concurrent tunnels, after which nginx REFUSES new/reconnecting
+# clients ("worker_connections are not enough") — a silent connect-failure on a
+# busy free-net panel. Raise the ceiling far above anything a small VPS will push
+# and lift the matching fd limits (a connection slot needs a file descriptor, and
+# systemd caps a unit's fds independently of nginx's own directive).
+if grep -qE '^\s*worker_connections\s' /etc/nginx/nginx.conf; then
+  sed -i -E 's/^(\s*)worker_connections\s+[0-9]+;/\1worker_connections 16384;/' /etc/nginx/nginx.conf
+else
+  sed -i -E '/events[[:space:]]*\{/a\    worker_connections 16384;' /etc/nginx/nginx.conf
+fi
+grep -qE '^\s*worker_rlimit_nofile\s' /etc/nginx/nginx.conf \
+  || sed -i '1i worker_rlimit_nofile 65535;' /etc/nginx/nginx.conf
+mkdir -p /etc/systemd/system/nginx.service.d
+cat > /etc/systemd/system/nginx.service.d/20-zeta-nofile.conf <<'UNIT'
+[Service]
+LimitNOFILE=65535
+UNIT
+systemctl daemon-reload 2>/dev/null || true
+
 # The panel (core/nginx.py) regenerates this with one `location <path> { ... }`
 # block per WS-family inbound, so every such inbound shares :80 with the
 # panel/WS-proxy instead of trying to bind it directly (which would just

@@ -346,8 +346,26 @@ def apply(db: Session) -> services.CommandResult:
         if not check.ok:
             detail = (check.stderr or check.stdout or "xray rejected the generated config").strip()
             return services.CommandResult(False, check.code, check.stdout, detail)
+    # A full `systemctl restart` drops EVERY live tunnel on this core, so never do
+    # it for a change that doesn't actually alter the running config. Editing a
+    # client's comment / limit_ip / sub_id, resetting traffic on a still-usable
+    # client, or the enforcement poller re-checking an already-usable client all
+    # regenerate a byte-identical config — skip the restart entirely for those.
+    if not _live_config_differs(config):
+        return services.CommandResult(True, 0, "[unchanged: core not restarted]", "")
     write_config(config)
     return services.restart(settings.xray_service)
+
+
+def _live_config_differs(config: dict) -> bool:
+    """True if `config` differs from the config currently on disk (or none is
+    readable). Lets :func:`apply` skip a needless core restart — which would sever
+    every connected tunnel — when the regenerated config equals the live one."""
+    try:
+        current = json.loads(settings.xray_config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return json.dumps(current, sort_keys=True) != json.dumps(config, sort_keys=True)
 
 
 def validate_config(config: dict | None = None) -> services.CommandResult:

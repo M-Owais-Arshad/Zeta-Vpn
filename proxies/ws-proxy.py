@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import socket
 
 log = logging.getLogger("zeta-ws")
 
@@ -87,7 +88,16 @@ async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, idle_
             if not data:
                 break
             writer.write(data)
-            await writer.drain()
+            # Bound the write too: an unbounded drain() on a peer that vanished
+            # mid-transfer (no FIN/RST) blocks until the kernel's ~15-min
+            # TCP_RETRIES2 window, pinning this connection's global + per-IP slot
+            # the whole time. Cap it at idle_timeout so a stalled writer is
+            # reclaimed on the same timescale as an idle reader.
+            try:
+                await asyncio.wait_for(writer.drain(), timeout=idle_timeout)
+            except asyncio.TimeoutError:
+                log.info("closing stalled connection (drain blocked %ss)", idle_timeout)
+                break
     except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
         pass
     finally:
@@ -98,6 +108,28 @@ def with_suppress(fn) -> None:
     try:
         fn()
     except Exception:  # noqa: BLE001
+        pass
+
+
+def enable_keepalive(writer: asyncio.StreamWriter) -> None:
+    """Turn on TCP keepalive for a stream's socket.
+
+    A peer that disappears without a FIN/RST (mobile radio loss, app killed
+    mid-session) is otherwise only reclaimed at the kernel's ~15-minute
+    TCP_RETRIES2 timeout — holding its global/per-IP slot the entire time.
+    Keepalive probes detect the dead peer in ~2 minutes (60s idle + 4×15s) and
+    let the OS drop the socket, freeing the slot. Best-effort: platforms without
+    a given TCP_KEEP* option simply skip it."""
+    sock = writer.get_extra_info("socket")
+    if sock is None:
+        return
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        for name, val in (("TCP_KEEPIDLE", 60), ("TCP_KEEPINTVL", 15), ("TCP_KEEPCNT", 4)):
+            opt = getattr(socket, name, None)
+            if opt is not None:
+                sock.setsockopt(socket.IPPROTO_TCP, opt, val)
+    except OSError:
         pass
 
 
@@ -151,6 +183,8 @@ async def handle(client_r, client_w, backend_host, backend_port, response, limit
                     peer_ip, limiter.max_total)
         with_suppress(client_w.close)
         return
+    # Detect a vanished client fast so its slot is freed in ~2 min, not ~15.
+    enable_keepalive(client_w)
 
     ip = None
     try:
@@ -175,6 +209,7 @@ async def handle(client_r, client_w, backend_host, backend_port, response, limit
             client_w.write(response.encode("latin-1"))
             await client_w.drain()
             backend_r, backend_w = await asyncio.open_connection(backend_host, backend_port)
+            enable_keepalive(backend_w)
         except OSError as exc:
             log.warning("backend connect failed for %s: %s", peer, exc)
             with_suppress(client_w.close)

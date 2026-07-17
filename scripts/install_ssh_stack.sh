@@ -63,10 +63,13 @@ if [ -f /etc/default/dropbear ]; then
   set_kv NO_START 0 /etc/default/dropbear
   set_kv DROPBEAR_PORT "${DROPBEAR_PORT_MAIN}" /etc/default/dropbear
   set_kv DROPBEAR_RECEIVE_WINDOW 65536 /etc/default/dropbear
+  # -K 60 = server keepalive every 60s (both ports; EXTRA_ARGS applies to the
+  # whole daemon). Mirrors OpenSSH's ClientAliveInterval 60 so an idle tunnel on
+  # a CGNAT/mobile NAT keeps its mapping alive instead of being silently dropped.
   if grep -q '^DROPBEAR_EXTRA_ARGS=' /etc/default/dropbear; then
-    sed -i "s|^DROPBEAR_EXTRA_ARGS=.*|DROPBEAR_EXTRA_ARGS=\"-p ${DROPBEAR_PORT_ALT}\"|" /etc/default/dropbear
+    sed -i "s|^DROPBEAR_EXTRA_ARGS=.*|DROPBEAR_EXTRA_ARGS=\"-p ${DROPBEAR_PORT_ALT} -K 60\"|" /etc/default/dropbear
   else
-    echo "DROPBEAR_EXTRA_ARGS=\"-p ${DROPBEAR_PORT_ALT}\"" >> /etc/default/dropbear
+    echo "DROPBEAR_EXTRA_ARGS=\"-p ${DROPBEAR_PORT_ALT} -K 60\"" >> /etc/default/dropbear
   fi
 fi
 systemctl enable dropbear >/dev/null 2>&1 || true
@@ -86,6 +89,7 @@ pid = /var/run/stunnel4.pid
 cert = /etc/stunnel/stunnel.pem
 client = no
 socket = a:SO_REUSEADDR=1
+socket = a:SO_KEEPALIVE=1
 socket = l:TCP_NODELAY=1
 socket = r:TCP_NODELAY=1
 
@@ -149,6 +153,9 @@ After=network.target
 ExecStart=/usr/local/bin/badvpn-udpgw --loglevel 0 --listen-addr 127.0.0.1:7300 --max-clients 500 --max-connections-for-client 50
 Restart=always
 RestartSec=3
+# One UDP socket per gaming flow; the stock 1024 soft-fd default would silently
+# drop new flows on a busy box. Match the other data-plane units.
+LimitNOFILE=1000000
 
 [Install]
 WantedBy=multi-user.target
