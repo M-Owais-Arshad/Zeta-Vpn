@@ -128,7 +128,7 @@ def _enforce_ssh_logins(db) -> None:  # noqa: ANN001
 
 
 def _accumulate_ssh_traffic(db) -> None:  # noqa: ANN001
-    """Add each SSH account's byte delta (per-uid iptables owner-match) to its
+    """Add each SSH account's byte delta (per-uid cgroup user-slice counter) to its
     running ``used_bytes`` total — the SSH equivalent of the Xray/sing-box
     per-user stats accumulation above. Best-effort: silently no-ops on a
     non-Linux/dev box (no `pwd`) or if the privileged counter read fails."""

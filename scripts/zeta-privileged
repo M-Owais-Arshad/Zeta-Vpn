@@ -170,12 +170,15 @@ case "$action" in
     ;;
 
   ssh-conns)
+    # zeta-privileged ssh-conns [ssh-port]
     # Read-only: list established SSH-stack connections WITH the pids holding
     # each socket, so the panel can attribute a peer IP to its account user
     # (the app resolves pids -> users itself, unprivileged). OpenSSH holds the
     # per-connection socket in a root process, so this needs root to see the
-    # owning pids. Fixed, argument-free, read-only command — safe to expose.
-    exec ss -tnHp state established '( sport = :22 or sport = :109 or sport = :143 )'
+    # owning pids. The optional arg is the box's real OpenSSH port (providers may
+    # move it off :22, e.g. 22022); we always also include the stock 22/109/143.
+    port="${1:-22}"; [[ "$port" =~ ^[0-9]+$ ]] || port=22
+    exec ss -tnHp state established "( sport = :${port} or sport = :22 or sport = :109 or sport = :143 )"
     ;;
 
   ssh-traffic)
@@ -218,6 +221,12 @@ case "$action" in
       # a live logind session (their slice exists). Offline => no traffic anyway.
       [ -d "/sys/fs/cgroup/${slice}" ] && { iptables -A "$CHAIN" -m cgroup --path "$slice" 2>/dev/null || true; }
     done
+    # Force success: the loop's last `[ -d ]` is false whenever the last-listed
+    # account is offline (the steady state), and under `set -e` that false status
+    # would become the wrapper's exit code — making the panel treat the whole poll
+    # as failed and DROP the counts already emitted above. Same footgun the
+    # useradd path guards against.
+    true
     ;;
 
   *)

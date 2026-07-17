@@ -209,10 +209,13 @@ def online_sessions() -> dict[str, list[str]]:
     real IP at a root/loopback front-end, so their peer is 127.0.0.1 and is
     dropped (they still show as online, just without a resolvable IP).
     """
+    # Include the box's real OpenSSH port (a provider may have moved it off :22,
+    # e.g. 22022) so direct-SSH peer IPs are still attributed on those boxes.
+    port = system_ssh_port()
     res = services.run_privileged(
-        ["ssh-conns"],
+        ["ssh-conns", str(port)],
         ["ss", "-tnHp", "state", "established",
-         "( sport = :22 or sport = :109 or sport = :143 )"],
+         f"( sport = :{port} or sport = :22 or sport = :109 or sport = :143 )"],
         timeout=10,
     )
     if not res.ok or not res.stdout.strip():
@@ -245,8 +248,10 @@ def traffic_deltas(uids: list[int]) -> dict[int, int]:
     """``{uid: bytes_transferred_since_the_last_call}`` for SSH-account uids.
 
     Raw SSH tunnelling has no per-user stats API like Xray, so usage is measured
-    with a per-uid iptables owner-match byte counter maintained by the privileged
-    ``ssh-traffic`` verb. It reads-and-zeroes, so each call returns just this
+    per systemd user-slice (cgroup v2) with an iptables counter on INPUT+OUTPUT,
+    maintained by the privileged ``ssh-traffic`` verb (owner-match under-counts —
+    OpenSSH privsep keeps the socket root-owned). It reads-and-zeroes (flush +
+    re-add per live slice each call), so each call returns just this
     interval's delta — the caller accumulates it into SSHAccount.used_bytes.
     Best-effort: returns ``{}`` on any failure or on a non-Linux/dev box."""
     if not uids:

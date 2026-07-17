@@ -276,7 +276,8 @@ usage and expiry, and a one-tap subscription import URL.
 zeta status          # service health
 zeta restart all     # restart panel + cores + nginx
 zeta info            # panel URL & credentials
-zeta update          # git pull + deps + restart
+zeta update          # self-update (git fetch/reset), keep data, restart panel only — live tunnels kept
+zeta update --full   # also re-apply firewall/SSH/nginx (brief reconnect)
 zeta backup          # tar up data + .env
 ```
 

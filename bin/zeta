@@ -50,10 +50,13 @@ cmd_update() {
   local data="${ZETA_DATA:-${ZETA_HOME}/data}" env="${ZETA_ENV:-${ZETA_HOME}/.env}"
 
   # 1. Safety backup. The DB + secrets are gitignored so git never touches them,
-  #    but a timestamped copy is cheap insurance so an update can NEVER lose an
-  #    operator's accounts/settings.
+  #    but a fresh pre-update copy is cheap insurance so an update can NEVER lose
+  #    an operator's accounts/settings (single most-recent copy, replaced each run).
   local bdir="/var/backups/zetavpn/pre-update"
   mkdir -p "$bdir"
+  # rm the previous copy first: `cp -a SRC $bdir/data` into an existing dir would
+  # nest ($bdir/data/data/...) each run, burying the newest snapshot.
+  rm -rf "$bdir/data"
   cp -a "$data" "$bdir/data" 2>/dev/null || true
   cp "$env" "$bdir/env" 2>/dev/null || true
 

@@ -77,7 +77,8 @@ it's also saved to `/opt/zetavpn/data/initial_admin.txt` (root-only) and retriev
 ## Updating
 
 ```bash
-zeta update      # git pull + reinstall deps + copy units + restart
+zeta update      # backup DB/.env + git fetch/reset + deps/units + restart panel only (live tunnels kept)
+zeta update --full  # also re-apply firewall/SSH/nginx (brief reconnect)
 ```
 
 Or re-run `install.sh`; it's idempotent and keeps your `.env` and data.
