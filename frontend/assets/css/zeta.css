@@ -309,6 +309,15 @@ input:focus, select:focus, textarea:focus {
 }
 input:disabled, select:disabled { opacity: 0.55; cursor: not-allowed; }
 input::placeholder, textarea::placeholder { color: rgba(169, 159, 165, 0.55); }
+/* Checkboxes/radios must NOT inherit the full-width text-input styling above,
+   or they stretch into a giant empty box. Reset to their natural glyph size. */
+input[type="checkbox"], input[type="radio"] {
+  width: 16px; height: 16px; flex: none; padding: 0; margin: 0;
+  border-radius: 5px; accent-color: var(--red); cursor: pointer;
+  vertical-align: middle;
+}
+input[type="radio"] { border-radius: 50%; }
+input[type="checkbox"]:focus, input[type="radio"]:focus { box-shadow: none; }
 select {
   appearance: none; -webkit-appearance: none;
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23a99fa5' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
