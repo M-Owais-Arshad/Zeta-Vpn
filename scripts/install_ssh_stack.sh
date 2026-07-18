@@ -47,6 +47,12 @@ GatewayPorts yes
 PermitTunnel yes
 ClientAliveInterval 60
 ClientAliveCountMax 3
+# Survive mobile reconnect storms: the stock 10:30:100 makes sshd start randomly
+# refusing NEW unauthenticated handshakes at just 10 in-flight — the usual
+# "server down" report on a busy free-net panel. Raise the unauthenticated
+# backlog; MaxSessions bounds channels per connection.
+MaxStartups 100:30:200
+MaxSessions 20
 CONF
 # Pre-auth banner (panel-managed; appended after the quoted heredoc so the path
 # expands). sshd reads the file per connection, so banner edits need no reload.
@@ -76,7 +82,11 @@ if [ -f /etc/default/dropbear ]; then
   }
   set_kv NO_START 0 /etc/default/dropbear
   set_kv DROPBEAR_PORT "${DROPBEAR_PORT_MAIN}" /etc/default/dropbear
-  set_kv DROPBEAR_RECEIVE_WINDOW 65536 /etc/default/dropbear
+  # 256KB (not the 64KB default): a Dropbear tunnel is bounded by receive_window
+  # / RTT, so 64KB caps a single high-RTT intl stream to ~3.5 Mbps well under the
+  # link + CPU headroom. 256KB lifts that ~4x per stream; cost is modest per-channel
+  # RAM, no stability downside.
+  set_kv DROPBEAR_RECEIVE_WINDOW 262144 /etc/default/dropbear
   # -K 60 = server keepalive every 60s (both ports; EXTRA_ARGS applies to the
   # whole daemon). Mirrors OpenSSH's ClientAliveInterval 60 so an idle tunnel on
   # a CGNAT/mobile NAT keeps its mapping alive instead of being silently dropped.

@@ -231,7 +231,11 @@ def build_inbounds(inbound: Inbound) -> list[dict]:
     """
     settings = build_inbound_settings(inbound)
     stream = build_stream_settings(inbound)
-    sniff = {"enabled": True, "destOverride": ["http", "tls", "quic"]} if inbound.sniffing else None
+    # Sniff http+tls only (drop quic): sniffing is needed for the bittorrent block
+    # rule (bittorrent is TCP/uTP, so the block still fires), but the quic override
+    # adds a per-connection first-payload parse cost and can disrupt a client's
+    # proxied browser QUIC for no routing benefit.
+    sniff = {"enabled": True, "destOverride": ["http", "tls"]} if inbound.sniffing else None
 
     def _one(tag: str, listen: str, port: int, stream_obj: dict | None = None) -> dict:
         obj = {

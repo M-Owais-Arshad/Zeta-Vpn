@@ -46,9 +46,15 @@ if grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null;
 fi
 
 # --- qdisc: fq (BBR's pacing partner) > fq_codel > leave default -------------
-write_sysctl net.core.default_qdisc fq \
-  || write_sysctl net.core.default_qdisc fq_codel \
-  || true
+# net.core.default_qdisc only applies to interfaces brought up AFTER it's set, so
+# without a live swap the already-up NIC keeps the distro-default qdisc until the
+# next reboot — base BBR then runs without its fq pacing partner. Apply it live to
+# the primary interface too (best-effort; harmless if tc/iface is absent).
+if write_sysctl net.core.default_qdisc fq || write_sysctl net.core.default_qdisc fq_codel; then
+  QDISC="$(sysctl -n net.core.default_qdisc 2>/dev/null || echo fq)"
+  IFACE="$(ip -o route show default 2>/dev/null | awk '{print $5; exit}')"
+  [ -n "$IFACE" ] && tc qdisc replace dev "$IFACE" root "$QDISC" 2>/dev/null || true
+fi
 
 # --- Buffers: a 16MB stability-first sweet spot ------------------------------
 # Moderate ceilings: big enough to saturate any realistic VPS link, small
