@@ -734,7 +734,7 @@
         html += '<div class="row">' +
           field("Up Mbps (0 = auto)", '<input id="d-up" type="number" min="0" value="' + (st0.up_mbps || 0) + '">') +
           field("Down Mbps (0 = auto)", '<input id="d-down" type="number" min="0" value="' + (st0.down_mbps || 0) + '">') + "</div>";
-        html += '<p class="hint">Set BOTH to the server\'s <b>real sustainable</b> speed to enable Hysteria2 <b>Brutal</b> — a fixed-rate mode that removes the QUIC speed fluctuation. Leave 0 for auto (BBR). Caution: set it to what the box can actually push (often ~100–300 Mbps on a 2-vCPU VPS); setting it ABOVE the real limit makes speed <b>worse</b>.</p>';
+        html += '<p class="hint">Sets the Hysteria2 server bandwidth. On a small / burstable VPS leave BOTH at <b>0</b> (auto BBR — recommended; BBR is the right choice on 2-vCPU hardware). Only set them on a box with real sustained CPU headroom, to the box\'s <b>real sustainable</b> rate — a value ABOVE what it can push makes speed <b>worse</b>. (Full fixed-rate "Brutal" also needs the client app configured with a matching bandwidth.)</p>';
       }
       dyn.innerHTML = html;
     }

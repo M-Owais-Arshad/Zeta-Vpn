@@ -131,7 +131,7 @@ REGISTRY: dict[str, ProtocolSpec] = {
         default_transport="udp",
         default_security="tls",
         udp=True,
-        notes="QUIC-based UDP relay with 0-RTT; client needs uuid + password.",
+        notes="QUIC-based UDP relay (bbr congestion); client needs uuid + password.",
         default_settings={"congestion_control": "bbr"},
     ),
 }
