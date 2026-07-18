@@ -729,6 +729,13 @@
           ? "Existing REALITY keys are kept as-is."
           : "REALITY keys, shortId and camouflage SNI are generated automatically on save (dest: www.apple.com).") + "</p>";
       }
+      if (proto.value === "hysteria2") {
+        var st0 = (existing && existing.settings) || {};
+        html += '<div class="row">' +
+          field("Up Mbps (0 = auto)", '<input id="d-up" type="number" min="0" value="' + (st0.up_mbps || 0) + '">') +
+          field("Down Mbps (0 = auto)", '<input id="d-down" type="number" min="0" value="' + (st0.down_mbps || 0) + '">') + "</div>";
+        html += '<p class="hint">Set BOTH to the server\'s <b>real sustainable</b> speed to enable Hysteria2 <b>Brutal</b> — a fixed-rate mode that removes the QUIC speed fluctuation. Leave 0 for auto (BBR). Caution: set it to what the box can actually push (often ~100–300 Mbps on a 2-vCPU VPS); setting it ABOVE the real limit makes speed <b>worse</b>.</p>';
+      }
       dyn.innerHTML = html;
     }
 
@@ -764,12 +771,18 @@
               fingerprint: "chrome",
             };
           }
+          // Hysteria2 bandwidth (Brutal): only touch `settings` for hysteria2 so
+          // an edit never wipes server-seeded settings of other protocols (e.g. a
+          // Shadowsocks-2022 PSK). 0/0 keeps the current auto (BBR) behaviour.
+          var dUp = $("#d-up", mo.root), dDn = $("#d-down", mo.root);
+          var hy2 = dUp ? { up_mbps: parseInt(dUp.value, 10) || 0, down_mbps: parseInt(dDn.value, 10) || 0 } : null;
           if (isEdit) {
             var patch = {
               remark: remark.value.trim(),
               network: net.value, security: sec.value,
               stream_settings: ss,
             };
+            if (hy2) patch.settings = hy2;
             var ppE = parsePorts(port.value);
             if (ppE.port) { patch.port = ppE.port; patch.extra_ports = ppE.extra; }
             await Z.patch("/inbounds/" + existing.id, patch);
@@ -785,7 +798,7 @@
               port: ppC.port,
               extra_ports: ppC.extra,
               network: net.value, security: sec.value,
-              settings: {}, stream_settings: ss, sniffing: true, auto_reality: true,
+              settings: hy2 || {}, stream_settings: ss, sniffing: true, auto_reality: true,
             };
             if (!payload.tag) { toast("Give the inbound a name or tag first", "err"); tag.focus(); return; }
             if (!payload.port) { toast("Port is required", "err"); port.focus(); return; }
