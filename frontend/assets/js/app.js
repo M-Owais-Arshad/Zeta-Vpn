@@ -1357,6 +1357,7 @@
       '<div class="card pad-lg"><div class="card-head"><h3>' + plural(list.length, "account") + "</h3>" +
       '<div class="tools">' +
         (list.length > 3 ? '<span class="search">' + IC.search + '<input id="q-ssh" placeholder="Search…"></span>' : "") +
+        (list.length ? '<button class="btn" id="refresh-ssh" data-tip="Fetch live usage from the server now">' + IC.refresh + " Refresh usage</button>" : "") +
         '<button class="btn primary" id="add-ssh">' + IC.plus + " Add account</button>" +
       "</div></div>" +
       (list.length
@@ -1369,6 +1370,16 @@
 
     function openAdd() { sshModal(); }
     $("#add-ssh").onclick = openAdd;
+    var rf = $("#refresh-ssh");
+    if (rf) rf.onclick = function () {
+      busy(rf, async function () {
+        try {
+          await Z.post("/ssh/refresh-traffic");
+          toast("Usage refreshed from the server");
+          reload();
+        } catch (e) { toast(e.message, "err"); }
+      });
+    };
     var ea = $("#empty-add"); if (ea) ea.onclick = openAdd;
     if (state.autoOpen === "ssh") { state.autoOpen = null; openAdd(); }
     var q = $("#q-ssh"); if (q) wireSearch(q, page.querySelector("tbody"));

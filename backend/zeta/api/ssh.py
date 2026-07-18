@@ -39,6 +39,23 @@ def list_accounts(db: Session = Depends(get_db), _: User = Depends(require_admin
     return [_to_out(a, counts, sessions) for a in accounts]
 
 
+@router.post("/refresh-traffic", response_model=list[SSHAccountOut])
+def refresh_traffic(db: Session = Depends(get_db), _: User = Depends(require_admin)) -> list[SSHAccountOut]:
+    """Force an immediate SSH-traffic poll (read the per-account cgroup byte
+    counters right now and fold them into each account's running total) instead
+    of waiting for the ~5s background poller, then return the freshened list.
+    Serialized with the poller by ssh_manager._traffic_lock so the read-and-zero
+    counters are never double-read. Runs in FastAPI's threadpool (sync def), so
+    the brief privileged read never blocks the event loop."""
+    from ..tasks import _accumulate_ssh_traffic  # lazy: avoid import cycle at load
+
+    _accumulate_ssh_traffic(db)
+    accounts = db.query(SSHAccount).order_by(SSHAccount.id).all()
+    counts = ssh_manager.online_counts()
+    sessions = ssh_manager.online_sessions()
+    return [_to_out(a, counts, sessions) for a in accounts]
+
+
 @router.post("", response_model=SSHAccountOut, status_code=status.HTTP_201_CREATED)
 def create_account(
     body: SSHAccountCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)

@@ -9,9 +9,17 @@ instead of raising.
 from __future__ import annotations
 
 import re
+import threading
 from datetime import date, datetime
 
 from . import services
+
+# Serializes the read-and-zero cgroup byte counters (the `ssh-traffic` verb
+# flushes them on each read). Without this, the 5s background poller and a manual
+# "refresh usage" click could read the same counters concurrently and either
+# split or double-count the interval's bytes. Held only around the privileged
+# read, which is quick.
+_traffic_lock = threading.Lock()
 
 # Usernames we must never touch even if asked.
 _RESERVED = {
@@ -256,7 +264,8 @@ def traffic_deltas(uids: list[int]) -> dict[int, int]:
     Best-effort: returns ``{}`` on any failure or on a non-Linux/dev box."""
     if not uids:
         return {}
-    res = services.run_privileged(["ssh-traffic", *[str(u) for u in uids]], ["true"], timeout=15)
+    with _traffic_lock:
+        res = services.run_privileged(["ssh-traffic", *[str(u) for u in uids]], ["true"], timeout=15)
     out: dict[int, int] = {}
     if not res.ok:
         return out
