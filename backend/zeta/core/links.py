@@ -149,9 +149,21 @@ def _shadowsocks(inbound: Inbound, client: Client, address: str) -> str:
     return f"ss://{userinfo}@{address}:{inbound.port}#{quote(_remark(inbound, client))}"
 
 
-def _hysteria2(inbound: Inbound, client: Client, address: str) -> str:
+def _tls_insecure() -> str:
+    """"1" (skip cert verify) unless a real domain is configured. Without a domain
+    the cert is the self-signed fallback, so a client verifying it aborts the
+    handshake ("io: read/write on closed pipe") — Hysteria2/TUIC clients must skip
+    verification there. A real Let's Encrypt cert (domain set) verifies normally."""
+    return "0" if settings.server_domain else "1"
+
+
+def _tls_sni(inbound: Inbound, address: str) -> str:
     tls = (inbound.stream_settings or {}).get("tls", {})
-    q = {"sni": tls.get("serverName", address), "insecure": "0"}
+    return tls.get("serverName") or settings.server_domain or address
+
+
+def _hysteria2(inbound: Inbound, client: Client, address: str) -> str:
+    q = {"sni": _tls_sni(inbound, address), "insecure": _tls_insecure()}
     return (
         f"hysteria2://{quote(client.password or '')}@{address}:{inbound.port}"
         f"?{urlencode(q)}#{quote(_remark(inbound, client))}"
@@ -159,11 +171,11 @@ def _hysteria2(inbound: Inbound, client: Client, address: str) -> str:
 
 
 def _tuic(inbound: Inbound, client: Client, address: str) -> str:
-    tls = (inbound.stream_settings or {}).get("tls", {})
     q = {
-        "sni": tls.get("serverName", address),
+        "sni": _tls_sni(inbound, address),
         "congestion_control": (inbound.settings or {}).get("congestion_control", "bbr"),
         "alpn": "h3",
+        "allow_insecure": _tls_insecure(),
     }
     return (
         f"tuic://{client.uuid}:{quote(client.password or '')}@{address}:{inbound.port}"
