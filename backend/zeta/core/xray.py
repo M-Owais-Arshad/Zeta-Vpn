@@ -83,7 +83,11 @@ def build_stream_settings(inbound: Inbound) -> dict:
     ss = inbound.stream_settings or {}
     network = inbound.network
     security = inbound.security
-    stream: dict = {"network": network, "security": security}
+    # tcpNoDelay disables Nagle so small interactive/gaming writes aren't held
+    # ~40ms for coalescing — a pure latency win for VLESS/VMess/Trojan/REALITY,
+    # which otherwise set no socket options. (Validated by `xray run -test` before
+    # any restart, so a bad field can never take the core down.)
+    stream: dict = {"network": network, "security": security, "sockopt": {"tcpNoDelay": True}}
 
     # --- transport ---
     if network == "ws":
