@@ -91,10 +91,11 @@ def _clash_proxy(ib: Inbound, c: Client, address: str) -> dict | None:
             pw = f"{st['password']}:{pw}"
         return {**base, "type": "ss", "cipher": st.get("method", "aes-256-gcm"), "password": pw}
     if ib.protocol == "hysteria2":
-        return {**base, "type": "hysteria2", "password": c.password, "sni": sni, "alpn": ["h3"]}
+        return {**base, "type": "hysteria2", "password": c.password, "sni": sni,
+                "alpn": ["h3"], "skip-cert-verify": True}
     if ib.protocol == "tuic":
         return {**base, "type": "tuic", "uuid": c.uuid, "password": c.password, "sni": sni,
-                "alpn": ["h3"], "congestion-controller": "bbr"}
+                "alpn": ["h3"], "congestion-controller": "bbr", "skip-cert-verify": True}
     return None
 
 
@@ -147,6 +148,10 @@ def _singbox_tls(ib: Inbound, address: str) -> dict:
                           "short_id": (r.get("shortIds", [""]) or [""])[0]}
     elif ib.protocol in ("hysteria2", "tuic"):
         tls["alpn"] = ["h3"]
+    # Hysteria2/TUIC terminate on the raw IP with a self-signed cert + camouflage
+    # SNI, so the client must skip verification or the QUIC handshake aborts.
+    if ib.protocol in ("hysteria2", "tuic"):
+        tls["insecure"] = True
     return {"tls": tls}
 
 

@@ -150,11 +150,16 @@ def _shadowsocks(inbound: Inbound, client: Client, address: str) -> str:
 
 
 def _tls_insecure() -> str:
-    """"1" (skip cert verify) unless a real domain is configured. Without a domain
-    the cert is the self-signed fallback, so a client verifying it aborts the
-    handshake ("io: read/write on closed pipe") — Hysteria2/TUIC clients must skip
-    verification there. A real Let's Encrypt cert (domain set) verifies normally."""
-    return "0" if settings.server_domain else "1"
+    """Always "1" (skip cert verify) for Hysteria2/TUIC.
+
+    These inbounds terminate on the RAW server IP with a camouflage SNI
+    (e.g. play.google.com) and a self-signed certificate — the panel never
+    provisions a CA cert matching that SNI. A client that verifies (insecure=0)
+    therefore ALWAYS aborts the handshake ("io: read/write on closed pipe"),
+    even when a domain is set (the domain fronts nginx/WS, not the QUIC
+    listener). So the only value that connects is 1. This matches how every
+    mainstream panel ships Hysteria2/TUIC (self-signed + insecure)."""
+    return "1"
 
 
 def _tls_sni(inbound: Inbound, address: str) -> str:
