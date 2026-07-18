@@ -231,17 +231,6 @@ class SSHAccount(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
 
 
-class TrafficSnapshot(Base):
-    """Periodic total-throughput samples for the dashboard network chart."""
-
-    __tablename__ = "traffic_snapshots"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ts: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, index=True)
-    rx_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
-    tx_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
-
-
 class AuditLog(Base):
     """Security-relevant events (logins, config pushes, account changes)."""
 

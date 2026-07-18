@@ -20,8 +20,8 @@ from sqlalchemy import func
 from . import auth as auth_lib
 from .config import settings
 from .db import SessionLocal
-from .models import Client, Inbound, TrafficSnapshot
-from .core import access_log, singbox, system_stats, xray
+from .models import Client, Inbound
+from .core import access_log, singbox, xray
 
 log = logging.getLogger("zeta.tasks")
 
@@ -33,12 +33,6 @@ _cut_clients: set[int] = set()
 # continuous under-limit, so a flapping client can't oscillate the core.
 _ip_ok_since: dict[int, float] = {}
 IP_LIMIT_CLEAR_COOLDOWN = 60.0
-
-# The stats poll runs frequently (for a responsive "online" badge), but the
-# dashboard throughput chart wants a longer history — so record a DB snapshot on
-# a fixed wall-clock cadence, decoupled from the poll rate.
-_SNAPSHOT_EVERY_SECONDS = 30.0
-_last_snapshot_at = 0.0
 
 
 def _accumulate_once() -> None:
@@ -113,8 +107,6 @@ def _accumulate_once() -> None:
         _accumulate_ssh_traffic(db)
     finally:
         db.close()
-
-    _maybe_record_snapshot()
 
 
 def _base_tag(tag: str) -> str:
@@ -280,44 +272,6 @@ def _enforce_limits(db) -> None:  # noqa: ANN001
     if singbox_restart:
         log.info("Reloading sing-box to enforce client limits")
         singbox.apply(db)
-
-
-def _maybe_record_snapshot() -> None:
-    """Record a throughput snapshot at most every _SNAPSHOT_EVERY_SECONDS,
-    regardless of how often the stats loop polls — so speeding up the poll for a
-    snappy online badge doesn't shrink the dashboard chart's time span."""
-    global _last_snapshot_at
-    now = time.time()
-    if now - _last_snapshot_at >= _SNAPSHOT_EVERY_SECONDS:
-        _last_snapshot_at = now
-        _record_snapshot()
-
-
-def _record_snapshot() -> None:
-    try:
-        snap = system_stats.snapshot()["net"]
-    except Exception:  # noqa: BLE001
-        return
-    db = SessionLocal()
-    try:
-        db.add(TrafficSnapshot(rx_bytes=snap["rx_bytes"], tx_bytes=snap["tx_bytes"]))
-        # Keep only the most recent ~2000 samples.
-        count = db.query(func.count(TrafficSnapshot.id)).scalar() or 0
-        if count > 2000:
-            oldest = (
-                db.query(TrafficSnapshot.id)
-                .order_by(TrafficSnapshot.id.asc())
-                .limit(count - 2000)
-                .all()
-            )
-            ids = [row[0] for row in oldest]
-            if ids:
-                db.query(TrafficSnapshot).filter(TrafficSnapshot.id.in_(ids)).delete(
-                    synchronize_session=False
-                )
-        db.commit()
-    finally:
-        db.close()
 
 
 async def stats_loop() -> None:
