@@ -9,17 +9,17 @@
 
 ## Install methods
 
-### 1. One-command (from GitHub)
+### 1. One-command (clone + install)
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
+git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git && cd Zeta-Vpn && sudo ./install.sh
 ```
 
-### 2. From a local clone
+### 2. From a local clone (step by step)
 
 ```bash
 git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git
-cd zetavpn
+cd Zeta-Vpn
 sudo ./install.sh
 ```
 

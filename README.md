@@ -38,8 +38,9 @@ together by a FastAPI backend and installed straight from GitHub.
 - **Telegram, built in.** A one-click **MTProto proxy** (mtg, FakeTLS) with a ready-to-share
   `t.me/proxy` link, plus an optional **Telegram bot** that provisions accounts straight from the
   panel — both toggled from the dashboard.
-- **One-command install from GitHub.** `curl | bash` detects your arch, pulls the core binaries
-  from their official releases, sets up systemd services, nginx, TLS (acme.sh), BBR and a firewall.
+- **One-command install from GitHub.** `git clone … && sudo ./install.sh` detects your arch, pulls
+  the core binaries from their official releases, sets up systemd services, nginx, TLS (acme.sh),
+  BBR and a firewall.
 - **A real web portal — no build step.** A clean, dark, responsive dashboard (framework-free,
   zero npm) to manage inbounds, clients, traffic quotas, expiry, SSH accounts and settings, plus a
   self-service **user subscription page**.
@@ -58,19 +59,13 @@ together by a FastAPI backend and installed straight from GitHub.
 On a fresh **Debian 11/12** or **Ubuntu 20.04 / 22.04 / 24.04** VPS, as **root**:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
+git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git && cd Zeta-Vpn && sudo ./install.sh
 ```
 
 With a domain (recommended — unlocks HTTPS + the TLS protocols), fully non-interactive:
 
 ```bash
-ZETA_DOMAIN=vpn.example.com ZETA_YES=1 bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
-```
-
-Or clone and run from a local checkout:
-
-```bash
-git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git && cd Zeta-Vpn && sudo ./install.sh
+git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git && cd Zeta-Vpn && sudo ZETA_DOMAIN=vpn.example.com ZETA_YES=1 ./install.sh
 ```
 
 The installer prints your **Panel URL, username and password** at the end (`zeta info` shows them again anytime). It also honours `ZETA_ADMIN_USERNAME`, `ZETA_ADMIN_PASSWORD`, `PANEL_PORT` and `ZETA_REPO` for forks — see [docs/INSTALL.md](docs/INSTALL.md) for the full list.
@@ -112,27 +107,19 @@ apt update && apt upgrade -y
 
 ---
 
-### Step 3 — Install ZetaVPN (one command)
+### Step 3 — Install ZetaVPN
 
-This downloads and runs the installer. It sets up Xray, sing-box, the SSH stack, nginx, the web panel, a firewall and BBR — automatically. It takes about **2–5 minutes**; answer the confirmation prompt with `y`:
+Clone the repo and run the installer. It sets up Xray, sing-box, the SSH stack, nginx, the web panel, a firewall and BBR — automatically. It takes about **2–5 minutes**; answer the confirmation prompt with `y`:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
+git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git && cd Zeta-Vpn && sudo ./install.sh
 ```
 
 **Have a domain? Use this instead** (point the domain's A record to your IP first). It also gets a free Let's Encrypt HTTPS certificate. Replace `vpn.example.com` with your domain:
 
 ```bash
-ZETA_DOMAIN=vpn.example.com ZETA_YES=1 bash <(curl -fsSL https://raw.githubusercontent.com/M-Owais-Arshad/Zeta-Vpn/main/install.sh)
+git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git && cd Zeta-Vpn && sudo ZETA_DOMAIN=vpn.example.com ZETA_YES=1 ./install.sh
 ```
-
-> Prefer to inspect the code first? Clone and run it locally instead:
-> ```bash
-> git clone https://github.com/M-Owais-Arshad/Zeta-Vpn.git
-> ```
-> ```bash
-> cd Zeta-Vpn && sudo ./install.sh
-> ```
 
 ---
 
