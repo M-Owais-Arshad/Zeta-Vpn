@@ -80,7 +80,11 @@ def apply_replace(db: Session, ib: Inbound, client: Client, *,
         removed_ok = True
         if old_ib is ib and old_email:
             removed_ok = xray.remove_user_live(ib, old_email).ok
-        if removed_ok and xray.add_user_live(ib, client).ok:
+        # Only push a live credential for a usable client (add_user_live ignores
+        # enabled/is_usable; generate_config filters it) — else fall through to a
+        # full reload that writes the filtered config. Defense-in-depth mirror of
+        # clients._apply_add.
+        if removed_ok and client.enabled and client.is_usable and xray.add_user_live(ib, client).ok:
             xray.persist_config(db)
             # The old client's DB row is already deleted, but if it lived on a
             # DIFFERENT core (e.g. a sing-box Hysteria2/TUIC inbound) that core

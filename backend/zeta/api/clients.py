@@ -73,7 +73,14 @@ def _apply_add(db: Session, ib: Inbound, client: Client) -> None:
     supports it (Xray VLESS/VMess/Trojan via HandlerService) — so creating an
     account never drops the other users' tunnels. Falls back to a full apply()
     (write + restart) for everything else, or if the live add fails."""
-    if xray.supports_live_user_ops(ib):
+    # Only push a LIVE credential for a client that's actually usable. add_user_live
+    # (HandlerService `adu`) does NOT inspect enabled/is_usable — unlike
+    # generate_config, which filters a disabled/expired/over-quota client out — so
+    # without this gate a client created with enabled=false would get a WORKING
+    # credential on the live core until the next restart ("works then dies"). For a
+    # non-usable client we fall through to _apply(): it writes the filtered config
+    # (client excluded) which is byte-identical, so no restart and no live entry.
+    if xray.supports_live_user_ops(ib) and client.enabled and client.is_usable:
         if xray.add_user_live(ib, client).ok:
             xray.persist_config(db)  # keep the on-disk config in sync, no restart
             return
