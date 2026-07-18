@@ -162,14 +162,13 @@ if ! [ -x /usr/local/bin/badvpn-udpgw ]; then
       # HEAD can't be built and run as root. Full clone (not --depth 1) so the
       # pinned SHA stays fetchable even once upstream HEAD advances past it.
       BADVPN_COMMIT="07268f02706e78e282e19641b5d1d41e8e89bf31"
+      # badvpn's CMakeLists targets cmake 2.6, which cmake >=3.28 (Ubuntu 24.04)
+      # hard-rejects — so sed the minimum up to 3.5 before configuring. -fcommon
+      # lets gcc >=10 (default -fno-common) link badvpn's tentative definitions.
       if git clone https://github.com/ambrop72/badvpn.git "$_bv/badvpn" >/dev/null 2>&1 \
          && ( cd "$_bv/badvpn" && git checkout -q "$BADVPN_COMMIT" \
               && [ "$(git rev-parse HEAD)" = "$BADVPN_COMMIT" ] ) \
          && ( cd "$_bv/badvpn" \
-              # badvpn's CMakeLists targets cmake 2.6, which cmake >=3.28 (Ubuntu
-              # 24.04) hard-rejects; bump the minimum so it configures. -fcommon
-              # is needed for gcc >=10 (default -fno-common) to link its multiple
-              # tentative definitions.
               && sed -i -E 's/cmake_minimum_required\s*\(\s*VERSION\s+[0-9.]+/cmake_minimum_required(VERSION 3.5/I' CMakeLists.txt \
               && mkdir -p build && cd build \
               && cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 -DCMAKE_C_FLAGS=-fcommon >/dev/null 2>&1 \
