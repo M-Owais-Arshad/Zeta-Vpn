@@ -165,8 +165,14 @@ if ! [ -x /usr/local/bin/badvpn-udpgw ]; then
       if git clone https://github.com/ambrop72/badvpn.git "$_bv/badvpn" >/dev/null 2>&1 \
          && ( cd "$_bv/badvpn" && git checkout -q "$BADVPN_COMMIT" \
               && [ "$(git rev-parse HEAD)" = "$BADVPN_COMMIT" ] ) \
-         && ( cd "$_bv/badvpn" && mkdir -p build && cd build \
-              && cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null 2>&1 \
+         && ( cd "$_bv/badvpn" \
+              # badvpn's CMakeLists targets cmake 2.6, which cmake >=3.28 (Ubuntu
+              # 24.04) hard-rejects; bump the minimum so it configures. -fcommon
+              # is needed for gcc >=10 (default -fno-common) to link its multiple
+              # tentative definitions.
+              && sed -i -E 's/cmake_minimum_required\s*\(\s*VERSION\s+[0-9.]+/cmake_minimum_required(VERSION 3.5/I' CMakeLists.txt \
+              && mkdir -p build && cd build \
+              && cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 -DCMAKE_C_FLAGS=-fcommon >/dev/null 2>&1 \
               && make >/dev/null 2>&1 ) \
          && [ -x "$_bv/badvpn/build/udpgw/badvpn-udpgw" ]; then
         install -m 0755 "$_bv/badvpn/build/udpgw/badvpn-udpgw" /usr/local/bin/badvpn-udpgw
