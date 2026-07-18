@@ -246,11 +246,16 @@ install -m 0755 "${ZETA_HOME}/bin/zeta" /usr/local/bin/zeta
 systemctl daemon-reload
 systemctl enable --now zeta-panel.service
 systemctl enable --now zeta-xray.service
-# Do NOT enable sing-box at boot: it would start a second Go core (~35MB RSS)
-# on every reboot even on Xray-only / SSH-only boxes, serving nothing. The
-# panel enables + starts it on demand when the first Hysteria2/TUIC inbound is
-# created and disables it again when the last one is removed (core/singbox.apply).
-systemctl disable zeta-singbox.service >/dev/null 2>&1 || true
+# Do NOT auto-enable sing-box at boot on an Xray-only / SSH-only box (a second Go
+# core ~35MB RSS serving nothing). The panel enables + starts it on demand when
+# the first Hysteria2/TUIC inbound is created (core/singbox.apply). BUT never
+# clobber that enable on a re-run/`zeta update`: if the panel already enabled it
+# (QUIC inbounds exist), disabling here would leave those inbounds DEAD after the
+# next reboot (disable != stop, and nothing re-enables at boot). So only disable
+# when it is NOT already enabled.
+if ! systemctl is-enabled zeta-singbox.service >/dev/null 2>&1; then
+  systemctl disable zeta-singbox.service >/dev/null 2>&1 || true
+fi
 systemctl enable --now zeta-ws.service
 ok "Services installed and started"
 
