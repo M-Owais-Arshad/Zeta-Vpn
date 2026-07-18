@@ -68,12 +68,20 @@ write_sysctl net.ipv4.tcp_wmem "4096 65536 16777216" || true
 write_sysctl net.ipv4.tcp_fastopen 3 || true
 write_sysctl net.ipv4.tcp_slow_start_after_idle 0 || true   # keep speed up after idle
 write_sysctl net.ipv4.tcp_notsent_lowat 131072 || true      # trim local send bufferbloat
-write_sysctl net.ipv4.tcp_mtu_probing 1 || true             # recover from PMTU blackholes (tunnels)
+# mtu_probing=2 + a low base_mss makes new connections start SMALL (1340) and
+# probe UP, instead of =1 which only reacts AFTER a large packet already stalled
+# (the "new sites hang over a tunnel" symptom). Proactive beats reactive here.
+write_sysctl net.ipv4.tcp_mtu_probing 2 || true
+write_sysctl net.ipv4.tcp_base_mss 1340 || true
 write_sysctl net.core.somaxconn 4096 || true
 write_sysctl net.ipv4.tcp_max_syn_backlog 8192 || true
 write_sysctl net.core.netdev_max_backlog 16384 || true
 write_sysctl net.ipv4.ip_forward 1 || true
 write_sysctl fs.file-max 1000000 || true
+# Per-socket UDP buffer floor so QUIC cores (Hysteria2/TUIC via quic-go) don't
+# drop under memory pressure on a non-boosted box (was Boost-only).
+write_sysctl net.ipv4.udp_rmem_min 65536 || true
+write_sysctl net.ipv4.udp_wmem_min 65536 || true
 
 # Persist ONLY the keys that actually stuck on this box (atomic replace), so the
 # reboot re-apply is clean and never logs a "cannot set" error.
@@ -84,6 +92,48 @@ else
   rm -f "$PERSIST"
 fi
 rm -f "$TMP"
+
+# --- Client-facing TCP MSS clamp: the definitive server-side fix for the
+# "new sites hang over a tunnel" PMTU blackhole affecting clients that CANNOT
+# set their own MTU (OpenTunnel over SSH/WS/stunnel, HTTP Injector). The box is
+# a TERMINATING userspace proxy (nginx/xray/ws-proxy all bind loopback), so the
+# client<->server TCP is LOCAL (PREROUTING->INPUT, never FORWARD). Rewriting the
+# client SYN's advertised MSS on PREROUTING caps every server->client download
+# segment, so the origin's relayed TLS ServerHello/cert fits the constrained
+# CGNAT/DPI client path instead of being silently dropped. --set-mss (fixed),
+# NOT --clamp-mss-to-pmtu: the server's own PMTU to its first hop reads 1500 and
+# can't see the middle hop. Loopback excluded so internal hops keep full
+# segments. Ship a tiny script + boot oneshot; the -C guard makes every apply
+# idempotent (re-running on `zeta update` or boot never stacks duplicates).
+# (TCP only — QUIC/Hysteria2 has no server MTU knob; those clients set MTU 1380.)
+ZETA_MSS="${ZETA_MSS:-1360}"
+cat > /usr/local/sbin/zeta-mss-clamp <<CLAMP
+#!/usr/bin/env bash
+# Managed by ZetaVPN (tune_bbr.sh) — idempotent client-facing MSS clamp.
+M=${ZETA_MSS}
+for spec in "PREROUTING ! -i lo" "OUTPUT ! -o lo"; do
+  read -r chain flag dev <<<"\$spec"
+  iptables -t mangle -C \$chain \$flag \$dev -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "\$M" 2>/dev/null \
+    || iptables -t mangle -A \$chain \$flag \$dev -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "\$M" 2>/dev/null || true
+done
+CLAMP
+chmod 0755 /usr/local/sbin/zeta-mss-clamp
+/usr/local/sbin/zeta-mss-clamp   # apply live now
+cat > /etc/systemd/system/zeta-mss.service <<'UNIT'
+[Unit]
+Description=ZetaVPN client-facing TCP MSS clamp (tunnel MTU fix)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/zeta-mss-clamp
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable zeta-mss.service >/dev/null 2>&1 || true
+ok "Client-facing MSS clamp active (--set-mss ${ZETA_MSS}, tunnel MTU fix)"
 
 CC="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)"
 QD="$(sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown)"
