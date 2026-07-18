@@ -229,8 +229,12 @@ async def main() -> None:
     ap.add_argument("--listen", default="0.0.0.0:8880", help="host:port to listen on")
     ap.add_argument("--backend", default="127.0.0.1:22", help="backend SSH host:port")
     ap.add_argument("--response", default=DEFAULT_RESPONSE, help="handshake response line")
-    ap.add_argument("--max-connections", type=int, default=2000, help="global concurrent connection cap")
-    ap.add_argument("--max-per-ip", type=int, default=40, help="per-source-IP concurrent connection cap")
+    # Each accepted WS tunnel re-originates a backend OpenSSH session (~6-10MB
+    # RSS each), so the sshd children — not ws-proxy fds — are the real memory
+    # ceiling. On a 1GB box ~80-100 tunnels already approaches OOM, so cap well
+    # below that; the old 2000/40 permitted several GB before ever engaging.
+    ap.add_argument("--max-connections", type=int, default=300, help="global concurrent connection cap")
+    ap.add_argument("--max-per-ip", type=int, default=10, help="per-source-IP concurrent connection cap")
     ap.add_argument("--idle-timeout", type=float, default=600, help="close a pipe after this many seconds with no data")
     args = ap.parse_args()
 

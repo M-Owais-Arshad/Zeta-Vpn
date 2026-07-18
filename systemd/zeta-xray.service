@@ -14,6 +14,10 @@ StartLimitBurst=20
 Type=simple
 User=zetavpn
 Group=zetavpn
+# Soft GC target so Go returns memory to the OS instead of floating RSS on a 1GB
+# box. Unlike a cgroup MemoryHigh (removed — it caused a reclaim sawtooth), this
+# only makes the collector work a little harder near the limit; it never kills.
+Environment=GOMEMLIMIT=128MiB
 ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
 Restart=on-failure
 RestartSec=3

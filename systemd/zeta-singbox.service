@@ -13,6 +13,9 @@ Type=simple
 User=zetavpn
 Group=zetavpn
 WorkingDirectory=/etc/sing-box
+# Soft GC target (see zeta-xray.service) so Go returns memory to the OS on a
+# 1GB box without the reclaim sawtooth a cgroup MemoryHigh caused.
+Environment=GOMEMLIMIT=128MiB
 ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 Restart=on-failure
 RestartSec=3

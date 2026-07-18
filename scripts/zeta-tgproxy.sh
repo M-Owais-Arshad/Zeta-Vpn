@@ -87,7 +87,7 @@ cmd_start() {
   {
     printf 'secret = "%s"\n'          "$secret"
     printf 'bind-to = "0.0.0.0:%s"\n' "$PORT"
-    printf 'concurrency = 2048\n'
+    printf 'concurrency = 512\n'
     [[ "$pubip" =~ ^[0-9.]+$ ]] && printf 'public-ipv4 = "%s"\n' "$pubip"
   } > "$CFG"
   chown root:"$SVC_GRP" "$CFG"; chmod 640 "$CFG"   # file-level read for the service, no dir ownership

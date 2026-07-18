@@ -26,6 +26,9 @@ _LINE_RE = re.compile(r"from \[?(?P<ip>[0-9a-fA-F.:]+)\]?:\d+ accepted .*email:\
 
 # Tail position so we only read newly-appended bytes on each poll.
 _offset = 0
+# First poll after startup seeks to EOF instead of reading from 0, so a large
+# un-rotated access log isn't slurped into memory whole on the first read.
+_started = False
 
 # email -> {ip: [last_accept, last_seen]}
 #   last_accept: last time a REAL access-log accept named this ip — drives the
@@ -40,11 +43,17 @@ _lock = threading.Lock()
 
 
 def _read_new_lines() -> list[str]:
-    global _offset
+    global _offset, _started
     path = settings.xray_access_log
     try:
         size = os.path.getsize(path)
     except OSError:
+        return []
+    if not _started:
+        # Skip whatever backlog already exists at startup — tail only new lines
+        # from here so a big un-rotated log can't spike RSS on the first poll.
+        _started = True
+        _offset = size
         return []
     if size < _offset:
         # Log was rotated/truncated since the last read; start from the top.
