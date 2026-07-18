@@ -81,6 +81,17 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("X-XSS-Protection", "0")
+    # Content-Security-Policy: all scripts are external files (index.html + the
+    # subscription portal load .js via <script src>, no inline <script>), so
+    # script-src can be locked to 'self' — the real XSS backstop. Inline STYLE
+    # attributes are used throughout (progress bars, layout), and QR codes are
+    # data: URIs, hence 'unsafe-inline' for style-src and data: for img-src only.
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
+        "base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    )
     return response
 
 

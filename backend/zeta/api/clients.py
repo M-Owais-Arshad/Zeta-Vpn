@@ -198,7 +198,7 @@ def create_client(
         total_bytes=int(body.total_gb * _GB) if body.total_gb else 0,
         expiry_time=expiry_ms,
         enabled=body.enabled,
-        sub_id=body.sub_id or secrets.token_hex(8),
+        sub_id=body.sub_id or secrets.token_hex(16),
         comment=body.comment,
     )
     db.add(client)
