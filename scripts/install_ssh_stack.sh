@@ -137,43 +137,50 @@ ok "stunnel (SSH-over-SSL) listening on ${STUNNEL_PORT}"
 
 msg "WebSocket SSH proxy will listen on ${WS_PORT} (unit: zeta-ws)"
 
-# ---- badvpn-udpgw: UDP over the SSH tunnel (gaming/voice) ----
-# Not packaged in apt, so built from source. Best-effort: if the build tools or
-# the build itself fail, the SSH stack still works — UDPGW is simply skipped and
-# the install never breaks over it. Binds loopback only (reachable ONLY through
-# an established SSH tunnel), so it adds no public attack surface.
+# ---- badvpn-udpgw: UDP over the SSH tunnel (QUIC/UDP browsing + gaming) ----
+# SSH carries only TCP, so WITHOUT this a client's UDP — including Chrome's QUIC
+# to Google, so searches/new sites hang while direct TCP loads — is blackholed.
+# badvpn-udpgw relays UDP through the tunnel and fixes that. PREFER the distro
+# package (fast, reliable, no build toolchain — badvpn IS in Ubuntu/Debian
+# 'universe'); only fall back to a pinned source build if apt doesn't have it.
+# Best-effort either way: SSH still works if it's skipped. Binds loopback only
+# (reachable ONLY through an established SSH tunnel), so no public attack surface.
 if ! [ -x /usr/local/bin/badvpn-udpgw ]; then
-  msg "Building badvpn-udpgw (UDP-over-SSH for gaming) — optional"
-  _had_cmake=1; command -v cmake >/dev/null 2>&1 || _had_cmake=0
-  if apt_install cmake gcc make git >/dev/null 2>&1; then
-    _bv=$(mktemp -d)
-    # Pin a known-good commit and verify it — mirroring the checksum-or-refuse
-    # policy used for mtg/xray/sing-box — so a moved or compromised upstream
-    # HEAD can't be built and run as root. A mismatch (or any failure) falls
-    # through to the graceful skip below: SSH still works, just no UDPGW. Full
-    # clone (not --depth 1) so the pinned SHA is always fetchable even once
-    # upstream HEAD advances past it.
-    BADVPN_COMMIT="07268f02706e78e282e19641b5d1d41e8e89bf31"
-    if git clone https://github.com/ambrop72/badvpn.git "$_bv/badvpn" >/dev/null 2>&1 \
-       && ( cd "$_bv/badvpn" && git checkout -q "$BADVPN_COMMIT" \
-            && [ "$(git rev-parse HEAD)" = "$BADVPN_COMMIT" ] ) \
-       && ( cd "$_bv/badvpn" && mkdir -p build && cd build \
-            && cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null 2>&1 \
-            && make >/dev/null 2>&1 ) \
-       && [ -x "$_bv/badvpn/build/udpgw/badvpn-udpgw" ]; then
-      install -m 0755 "$_bv/badvpn/build/udpgw/badvpn-udpgw" /usr/local/bin/badvpn-udpgw
-      ok "badvpn-udpgw installed"
-    else
-      warn "badvpn-udpgw build failed — SSH works, just no UDP/gaming gateway"
-    fi
-    rm -rf "$_bv"
-    # Only purge cmake if WE installed it — and never `apt-get autoremove`,
-    # which is system-wide and would sweep away unrelated orphaned packages on
-    # a shared box (breaking other software). Purging cmake alone drops just
-    # cmake; its build deps are harmless to leave.
-    [ "$_had_cmake" = 0 ] && { apt-get purge -y cmake >/dev/null 2>&1 || true; }
+  msg "Installing badvpn-udpgw (UDP-over-SSH — fixes QUIC/UDP + gaming)"
+  if apt_install badvpn >/dev/null 2>&1 && [ -x /usr/bin/badvpn-udpgw ]; then
+    # apt installs it at /usr/bin; point the service's fixed /usr/local/bin path
+    # at it so no build toolchain is ever needed on a normal Ubuntu/Debian box.
+    ln -sf /usr/bin/badvpn-udpgw /usr/local/bin/badvpn-udpgw
+    ok "badvpn-udpgw installed (apt)"
   else
-    warn "badvpn build deps unavailable — skipping UDPGW (SSH still works)"
+    msg "apt badvpn unavailable — building from source (optional)"
+    _had_cmake=1; command -v cmake >/dev/null 2>&1 || _had_cmake=0
+    if apt_install cmake gcc make git >/dev/null 2>&1; then
+      _bv=$(mktemp -d)
+      # Pin a known-good commit and verify it — mirroring the checksum-or-refuse
+      # policy used for mtg/xray/sing-box — so a moved or compromised upstream
+      # HEAD can't be built and run as root. Full clone (not --depth 1) so the
+      # pinned SHA stays fetchable even once upstream HEAD advances past it.
+      BADVPN_COMMIT="07268f02706e78e282e19641b5d1d41e8e89bf31"
+      if git clone https://github.com/ambrop72/badvpn.git "$_bv/badvpn" >/dev/null 2>&1 \
+         && ( cd "$_bv/badvpn" && git checkout -q "$BADVPN_COMMIT" \
+              && [ "$(git rev-parse HEAD)" = "$BADVPN_COMMIT" ] ) \
+         && ( cd "$_bv/badvpn" && mkdir -p build && cd build \
+              && cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null 2>&1 \
+              && make >/dev/null 2>&1 ) \
+         && [ -x "$_bv/badvpn/build/udpgw/badvpn-udpgw" ]; then
+        install -m 0755 "$_bv/badvpn/build/udpgw/badvpn-udpgw" /usr/local/bin/badvpn-udpgw
+        ok "badvpn-udpgw installed (source)"
+      else
+        warn "badvpn-udpgw build failed — SSH works, just no UDP/QUIC gateway"
+      fi
+      rm -rf "$_bv"
+      # Only purge cmake if WE installed it — never `apt-get autoremove` (would
+      # sweep unrelated orphans on a shared box). Purging cmake alone is safe.
+      [ "$_had_cmake" = 0 ] && { apt-get purge -y cmake >/dev/null 2>&1 || true; }
+    else
+      warn "badvpn build deps unavailable — skipping UDPGW (SSH still works)"
+    fi
   fi
 fi
 if [ -x /usr/local/bin/badvpn-udpgw ]; then
