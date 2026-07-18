@@ -927,23 +927,29 @@
   };
 
   // -------- Clients --------
-  function clientRow(c, ib, showInbound) {
-    var used = (c.up || 0) + (c.down || 0);
-    var pct = c.total_bytes ? Math.min(100, Math.round((used / c.total_bytes) * 100)) : null;
-    var quota = fmtBytes(used) + " / " + (c.total_bytes ? fmtBytes(c.total_bytes) : "∞");
+  function clientOnlineCell(c, ib) {
     var ips = c.online_ips || [];
     var online = ips.length
       ? '<button class="badge on" data-ips="' + c.id + '" data-ib="' + ib.id + '"><span class="dot up"></span> ' + ips.length + (c.limit_ip ? " / " + c.limit_ip : "") + "</button>"
       : '<span class="badge neutral"><span class="dot idle"></span> offline</span>';
     if (c.ip_limit_exceeded) online += ' <span class="badge warn" data-tip="More devices than the IP limit — blocked until it drops">IP limit</span>';
+    return online;
+  }
+  function clientUsageCell(c) {
+    var used = (c.up || 0) + (c.down || 0);
+    var pct = c.total_bytes ? Math.min(100, Math.round((used / c.total_bytes) * 100)) : null;
+    var quota = fmtBytes(used) + " / " + (c.total_bytes ? fmtBytes(c.total_bytes) : "∞");
+    return quota + (pct != null ? '<div class="progress mini' + (pct >= 85 ? " crit" : pct >= 60 ? " warn" : "") + '"><span style="width:' + pct + '%"></span></div>' : "");
+  }
+  function clientRow(c, ib, showInbound) {
     var cred = c.uuid || c.password || "";
     return "<tr>" +
       '<td><span class="badge ' + (c.enabled ? "on" : "off") + '">' + (c.enabled ? "Active" : "Off") + "</span></td>" +
       "<td><b>" + esc(c.email) + "</b>" + (c.comment ? '<span class="sub">' + esc(c.comment) + "</span>" : "") + "</td>" +
       (showInbound ? '<td><span class="badge proto">' + esc(ib.protocol) + "</span> " + esc(ib.remark || ib.tag) + "</td>" : "") +
       '<td><button class="copy-cell" data-copycred="' + esc(cred) + '" data-tip="Copy credential" aria-label="Copy credential">' + esc(cred.slice(0, 10)) + "… " + IC.copy + "</button></td>" +
-      "<td>" + online + "</td>" +
-      "<td>" + quota + (pct != null ? '<div class="progress mini' + (pct >= 85 ? " crit" : pct >= 60 ? " warn" : "") + '"><span style="width:' + pct + '%"></span></div>' : "") + "</td>" +
+      '<td data-live-on="' + c.id + '">' + clientOnlineCell(c, ib) + "</td>" +
+      '<td data-live-tr="' + c.id + '">' + clientUsageCell(c) + "</td>" +
       "<td>" + fmtExpiry(c.expiry_time) + "</td>" +
       '<td class="actions">' +
         '<button class="icon-btn success" data-link="' + c.id + '" data-ib="' + ib.id + '" data-tip="Share link / QR" aria-label="Share">' + IC.link + "</button>" +
@@ -1126,6 +1132,30 @@
       });
     };
     wireClientActions(page, allItems, reload);
+    // Live usage monitor: re-fetch each inbound's clients every few seconds and
+    // patch the Online/Usage cells in place (no full re-render). Uses the values
+    // the background poller already refreshes — no extra core polling.
+    everyLater(5000, async function () {
+      var fresh;
+      try {
+        fresh = await Promise.all(ibs.map(function (ib) {
+          return Z.get("/inbounds/" + ib.id + "/clients").catch(function () { return []; });
+        }));
+      } catch (e) { return; }
+      if (stale(ep)) return;
+      var freshItems = [];
+      ibs.forEach(function (ib, i) {
+        (fresh[i] || []).forEach(function (c) {
+          freshItems.push({ c: c, ib: ib });
+          var tc = page.querySelector('[data-live-tr="' + c.id + '"]');
+          if (tc) tc.innerHTML = clientUsageCell(c);
+          var oc = page.querySelector('[data-live-on="' + c.id + '"]');
+          if (oc) oc.innerHTML = clientOnlineCell(c, ib);
+        });
+      });
+      allItems = freshItems;
+      wireClientActions(page, allItems, reload);
+    });
   };
 
   function clientModal(ib, existing, refreshFn) {
@@ -1346,16 +1376,19 @@
     var list;
     try { list = await Z.get("/ssh"); } catch (e) { if (!stale(ep)) errState(page, e.message); return; }
     if (stale(ep)) return;
-    var rows = list.map(function (a) {
-      var online = a.online > 0
+    function sshOnlineBadge(a) {
+      return a.online > 0
         ? '<button class="badge on" data-ssh-ips="' + a.id + '"><span class="dot up"></span> ' + a.online + " online</button>"
         : '<span class="badge neutral"><span class="dot idle"></span> 0 online</span>';
+    }
+    var rows = list.map(function (a) {
+      var online = sshOnlineBadge(a);
       return "<tr>" +
         '<td><span class="badge ' + (a.enabled ? "on" : "off") + '">' + (a.enabled ? "Active" : "Locked") + "</span></td>" +
         "<td><b>" + esc(a.username) + "</b>" + (a.comment ? '<span class="sub">' + esc(a.comment) + "</span>" : "") + "</td>" +
         "<td>" + a.max_login + "</td>" +
-        "<td>" + online + "</td>" +
-        '<td class="mono">' + fmtBytes(a.used_bytes || 0) + "</td>" +
+        '<td data-live-on="' + a.id + '">' + online + "</td>" +
+        '<td class="mono" data-live-tr="' + a.id + '">' + fmtBytes(a.used_bytes || 0) + "</td>" +
         "<td>" + (a.expiry_date ? fmtExpiry(new Date(a.expiry_date).getTime()) : '<span class="muted">Never</span>') + "</td>" +
         '<td class="actions">' +
           '<button class="icon-btn success" data-info="' + a.id + '" data-tip="Connection info" aria-label="Connection info">' + IC.link + "</button>" +
@@ -1446,19 +1479,38 @@
         catch (e) { toast(e.message, "err"); }
       };
     });
-    page.querySelectorAll("[data-ssh-ips]").forEach(function (b) {
-      b.onclick = function () {
-        var a = list.find(function (x) { return x.id == b.getAttribute("data-ssh-ips"); });
-        var ips = (a && a.online_ips) || [];
-        modal({
-          title: "Active IPs · " + (a ? a.username : ""),
-          body: (ips.length
-            ? '<ul class="ip-list">' + ips.map(function (ip) { return '<li class="mono">' + esc(ip) + "</li>"; }).join("") + "</ul>"
-            : '<p class="hint">Connected, but the source IP isn\'t visible for SSL/WebSocket sessions (only direct OpenSSH/Dropbear expose it).</p>') +
-            '<p class="hint">' + plural(a ? a.online : 0, "session") + " online" +
-            (ips.length < (a ? a.online : 0) ? " · " + (a.online - ips.length) + " via SSL/WS (IP hidden)" : "") + "</p>",
-        });
-      };
+    function wireSshIps() {
+      page.querySelectorAll("[data-ssh-ips]").forEach(function (b) {
+        b.onclick = function () {
+          var a = list.find(function (x) { return x.id == b.getAttribute("data-ssh-ips"); });
+          var ips = (a && a.online_ips) || [];
+          modal({
+            title: "Active IPs · " + (a ? a.username : ""),
+            body: (ips.length
+              ? '<ul class="ip-list">' + ips.map(function (ip) { return '<li class="mono">' + esc(ip) + "</li>"; }).join("") + "</ul>"
+              : '<p class="hint">Connected, but the source IP isn\'t visible for SSL/WebSocket sessions (only direct OpenSSH/Dropbear expose it).</p>') +
+              '<p class="hint">' + plural(a ? a.online : 0, "session") + " online" +
+              (ips.length < (a ? a.online : 0) ? " · " + (a.online - ips.length) + " via SSL/WS (IP hidden)" : "") + "</p>",
+          });
+        };
+      });
+    }
+    wireSshIps();
+    // Live usage monitor: the background poller refreshes used_bytes + online
+    // every few seconds, so re-fetch and patch the Traffic/Online cells IN PLACE
+    // (no full re-render, no extra server-side polling) for a real-time view.
+    everyLater(5000, async function () {
+      var fresh;
+      try { fresh = await Z.get("/ssh"); } catch (e) { return; }
+      if (stale(ep)) return;
+      list = fresh;
+      fresh.forEach(function (a) {
+        var tc = page.querySelector('[data-live-tr="' + a.id + '"]');
+        if (tc) tc.textContent = fmtBytes(a.used_bytes || 0);
+        var oc = page.querySelector('[data-live-on="' + a.id + '"]');
+        if (oc) oc.innerHTML = sshOnlineBadge(a);
+      });
+      wireSshIps();
     });
   };
 
