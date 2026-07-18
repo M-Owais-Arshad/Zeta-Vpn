@@ -43,8 +43,14 @@ def _tls_block(inbound: Inbound, alpn_default: list[str]) -> dict:
         "enabled": True,
         "server_name": tls.get("serverName", settings.server_domain),
         "alpn": tls.get("alpn", alpn_default),
-        "certificate_path": tls.get("certificateFile", ""),
-        "key_path": tls.get("keyFile", ""),
+        # Mirror xray.py: fall back to the panel cert dir so _ensure_certs always
+        # has a concrete path to self-sign on a domainless box (an explicitly-set
+        # certificateFile/keyFile still wins via the `or`). Without this, an
+        # API/bot-created Hysteria2/TUIC inbound with an empty tls block gets
+        # certificate_path="" and sing-box rejects it ("read certificate: no such
+        # file") — the self-signed fallback never fires.
+        "certificate_path": tls.get("certificateFile") or str(settings.cert_dir / "fullchain.pem"),
+        "key_path": tls.get("keyFile") or str(settings.cert_dir / "privkey.pem"),
     }
 
 

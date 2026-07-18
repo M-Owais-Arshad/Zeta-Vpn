@@ -14,6 +14,7 @@ import yaml
 
 from ..config import settings
 from ..models import Client, Inbound
+from . import links
 
 
 def _sni(ib: Inbound, address: str) -> str:
@@ -67,7 +68,13 @@ def _clash_proxy(ib: Inbound, c: Client, address: str) -> dict | None:
     name = _name(ib, c)
     sni = _sni(ib, address)
     tls = ib.security in ("tls", "reality")
-    base = {"name": name, "server": address, "port": ib.port, "udp": True}
+    # Dial the raw origin IP for everything that is NOT an nginx-fronted WS inbound
+    # (REALITY / Hysteria2 / TUIC / direct-TLS / raw-TCP): a CDN/proxied domain
+    # terminates TLS and drops UDP, so those must reach the origin — same rule the
+    # base64 links use (links._address_for). SNI stays domain-first (the flat
+    # `address`) so direct-TLS cert validation isn't broken by dialing the IP.
+    addr = links._address_for(ib)
+    base = {"name": name, "server": addr, "port": ib.port, "udp": True}
 
     if ib.protocol == "vless":
         p = {**base, "type": "vless", "uuid": c.uuid, "tls": tls, "servername": sni,
@@ -83,7 +90,13 @@ def _clash_proxy(ib: Inbound, c: Client, address: str) -> dict | None:
         return {**base, "type": "vmess", "uuid": c.uuid, "alterId": 0, "cipher": "auto",
                 "tls": tls, "servername": sni if tls else "", **_clash_transport(ib)}
     if ib.protocol == "trojan":
-        return {**base, "type": "trojan", "password": c.password, "sni": sni, **_clash_transport(ib)}
+        p = {**base, "type": "trojan", "password": c.password, "sni": sni,
+             "client-fingerprint": _fingerprint(ib), **_clash_transport(ib)}
+        if ib.security == "reality":
+            r = (ib.stream_settings or {}).get("reality", {})
+            p["reality-opts"] = {"public-key": r.get("publicKey", ""),
+                                 "short-id": (r.get("shortIds", [""]) or [""])[0]}
+        return p
     if ib.protocol == "shadowsocks":
         st = ib.settings or {}
         pw = c.password or ""
@@ -135,6 +148,12 @@ def _singbox_transport(ib: Inbound) -> dict:
         return {"transport": t}
     if ib.network == "grpc":
         return {"transport": {"type": "grpc", "service_name": ss.get("grpc", {}).get("serviceName", "zeta")}}
+    if ib.network == "httpupgrade":
+        cfg = ss.get("httpupgrade", {})
+        t = {"type": "httpupgrade", "path": cfg.get("path", "/")}
+        if cfg.get("host"):
+            t["host"] = cfg["host"]  # sing-box HTTPUpgrade takes host top-level, not under headers
+        return {"transport": t}
     return {}
 
 
@@ -156,8 +175,14 @@ def _singbox_tls(ib: Inbound, address: str) -> dict:
 
 
 def _singbox_outbound(ib: Inbound, c: Client, address: str) -> dict | None:
+    if ib.network == "xhttp":
+        return None  # sing-box has no XHTTP transport (Clash skips it too)
     tag = _name(ib, c)
-    base = {"tag": tag, "server": address, "server_port": ib.port}
+    # Per-inbound dial host (raw IP for REALITY/QUIC/direct-TLS/raw-TCP, domain only
+    # for nginx-fronted WS) — see _clash_proxy. SNI stays on the flat domain-first
+    # `address` via _singbox_tls(ib, address).
+    addr = links._address_for(ib)
+    base = {"tag": tag, "server": addr, "server_port": ib.port}
     if ib.protocol == "vless":
         o = {"type": "vless", **base, "uuid": c.uuid, **_singbox_transport(ib), **_singbox_tls(ib, address)}
         if c.flow:

@@ -233,21 +233,30 @@ def build_inbounds(inbound: Inbound) -> list[dict]:
     stream = build_stream_settings(inbound)
     sniff = {"enabled": True, "destOverride": ["http", "tls", "quic"]} if inbound.sniffing else None
 
-    def _one(tag: str, listen: str, port: int) -> dict:
+    def _one(tag: str, listen: str, port: int, stream_obj: dict | None = None) -> dict:
         obj = {
             "tag": tag,
             "listen": listen,
             "port": port,
             "protocol": inbound.protocol,
             "settings": settings,
-            "streamSettings": stream,
+            "streamSettings": stream if stream_obj is None else stream_obj,
         }
         if sniff is not None:
             obj["sniffing"] = sniff
         return obj
 
     if protocols.is_ws_family(inbound.network) and inbound.internal_port:
-        out = [_one(inbound.tag, "127.0.0.1", inbound.internal_port)]
+        # nginx terminates any public TLS/REALITY on :80/:443 and proxies PLAINTEXT
+        # to this loopback socket, so the loopback listener must NOT expect a
+        # tls/reality handshake — otherwise it reads nginx's plaintext "GET /path"
+        # as a broken TLS record and every client connection silently fails. The
+        # client link keeps advertising the public security (correct for the
+        # client->nginx hop); direct extra_ports below stay on the public security
+        # because THEY bind publicly with no nginx in front.
+        loop_stream = {k: v for k, v in stream.items() if k not in ("tlsSettings", "realitySettings")}
+        loop_stream["security"] = "none"
+        out = [_one(inbound.tag, "127.0.0.1", inbound.internal_port, loop_stream)]
     else:
         out = [_one(inbound.tag, inbound.listen or "0.0.0.0", inbound.port)]
     for p in (inbound.extra_ports or []):
