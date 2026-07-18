@@ -71,8 +71,6 @@
   }
 
   window.Zeta = {
-    base: BASE,
-    apiBase: API,
     getToken: getToken,
     setToken: setToken,
     isAuthed: function () { return !!getToken(); },

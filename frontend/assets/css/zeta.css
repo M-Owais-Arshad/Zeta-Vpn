@@ -150,7 +150,6 @@ button { font-family: inherit; cursor: pointer; }
 /* ---------- Cards / grid ---------- */
 .grid { display: grid; gap: 18px; }
 .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
-.grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
 /* Swap line under the Memory card's progress bar (kept last so the bar stays
    aligned with the other stat cards) */
@@ -425,7 +424,6 @@ textarea.share-block {
 .tb-left { display: flex; align-items: center; gap: 12px; }
 .form-error { color: var(--danger); font-size: 13px; min-height: 16px; margin: 0 0 10px; }
 .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
-.back-link { margin-bottom: 4px; }
 .confirm-msg { margin: 0 0 6px; line-height: 1.55; }
 .t-danger { color: var(--danger); }
 .t-warn { color: var(--warn); }
@@ -555,7 +553,7 @@ input[readonly] { color: var(--muted); background: rgba(0, 0, 0, 0.2); }
   .icon-btn.menu-toggle { display: inline-flex; }
   .main { padding: 18px 16px 48px; }
   .grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
-  .grid.cols-3, .grid.cols-2 { grid-template-columns: 1fr; }
+  .grid.cols-2 { grid-template-columns: 1fr; }
   .row { grid-template-columns: 1fr; }
   .topbar h2 { font-size: 19px; }
   [data-tip]::after { display: none; } /* hover tooltips don't exist on touch */
