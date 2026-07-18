@@ -249,15 +249,17 @@ def validate_config(config: dict | None = None) -> services.CommandResult:
 # --------------------------------------------------------------------------- #
 
 def query_stats(reset: bool = True) -> dict:
-    """Return parsed per-user traffic deltas from sing-box's Clash API.
+    """Return parsed per-inbound traffic deltas from sing-box's Clash API.
 
-    sing-box has no gRPC StatsService like Xray; the Clash API's
-    ``/connections`` endpoint reports each *live* connection's cumulative
-    upload/download plus a ``metadata.user`` field (populated for
-    multi-user inbounds — hysteria2, tuic, shadowsocks) identifying which
-    configured user it belongs to. We diff against the totals seen on the
-    previous poll to get a delta, the same shape ``xray.query_stats()``
-    returns, so ``tasks.py`` can treat both cores identically.
+    sing-box has no gRPC StatsService like Xray and its Clash API
+    ``/connections`` endpoint carries NO per-user field — the inbound identity
+    is folded into ``metadata.type`` as ``"<inboundType>/<tag>"``. So this
+    returns per-INBOUND deltas (``out["inbounds"]``); ``tasks.py`` bills a
+    single-client inbound's delta to that client for QUIC data-limits. We diff
+    each live connection's cumulative upload/download against the previous poll,
+    the same delta shape ``xray.query_stats()`` returns, so both cores are
+    processed identically. (Per-user attribution on a MULTI-client QUIC inbound
+    is not available from this API — a sing-box limitation.)
 
     Best-effort: if sing-box isn't running or the Clash API is unreachable
     (e.g. dev box, core just restarted), returns empty stats rather than
@@ -282,33 +284,40 @@ def query_stats(reset: bool = True) -> dict:
     for conn in data.get("connections", []) or []:
         conn_id = conn.get("id")
         metadata = conn.get("metadata") or {}
-        user = metadata.get("user")
         upload = int(conn.get("upload", 0) or 0)
         download = int(conn.get("download", 0) or 0)
-        if not conn_id or not user:
+        if not conn_id:
             continue
         seen_ids.add(conn_id)
         prev_up, prev_down = _last_seen.get(conn_id, (0, 0))
         delta_up = max(0, upload - prev_up)
         delta_down = max(0, download - prev_down)
         _last_seen[conn_id] = (upload, download)
+        # sing-box's Clash API does NOT expose a per-user field on a connection;
+        # the inbound identity is folded into metadata["type"] as
+        # "<inboundType>/<tag>" (e.g. "hysteria2/hy2-in"). So per-INBOUND totals
+        # ARE recoverable — the dashboard proxy_traffic total and single-client
+        # quota (attributed in tasks.py) — but per-user attribution for a
+        # MULTI-client QUIC inbound is a sing-box API limitation. The "user"/
+        # "inbound" keys are kept as a forward-compat fallback in case a future
+        # sing-box adds them.
+        conn_type = metadata.get("type") or ""
+        inbound_tag = (
+            conn_type.split("/", 1)[1] if "/" in conn_type
+            else metadata.get("inbound") or metadata.get("inboundTag")
+        )
+        user = metadata.get("user")
         if delta_up or delta_down:
-            rec = out["users"].setdefault(user, {"up": 0, "down": 0})
-            rec["up"] += delta_up
-            rec["down"] += delta_down
-            # Fold the same delta into the per-inbound bucket so Hysteria2/TUIC
-            # inbounds record traffic. xray.query_stats populates out["inbounds"];
-            # without this the QUIC inbounds AND the dashboard proxy_traffic total
-            # (SUM(Inbound.up/down)) permanently read 0. The Clash API carries the
-            # inbound tag in connection metadata; "<tag>@<port>" folding in
-            # tasks.py still applies.
-            inbound_tag = metadata.get("inbound") or metadata.get("inboundTag")
             if inbound_tag:
                 irec = out["inbounds"].setdefault(inbound_tag, {"up": 0, "down": 0})
                 irec["up"] += delta_up
                 irec["down"] += delta_down
+            if user:
+                rec = out["users"].setdefault(user, {"up": 0, "down": 0})
+                rec["up"] += delta_up
+                rec["down"] += delta_down
         source_ip = metadata.get("sourceIP")
-        if source_ip:
+        if source_ip and user:
             with _lock:
                 _recent_ips.setdefault(user, {})[source_ip] = now
 

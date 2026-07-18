@@ -75,6 +75,23 @@ def _accumulate_once() -> None:
                 if ib:
                     ib.up = (ib.up or 0) + rec["up"]
                     ib.down = (ib.down or 0) + rec["down"]
+
+        # sing-box's Clash API can't attribute QUIC (Hysteria2/TUIC) traffic to a
+        # specific user, so singbox_stats["users"] is empty. But for the common
+        # ONE-client-per-inbound case we can bill the whole inbound's delta to that
+        # single client, so its data-limit still enforces. (Multi-client QUIC
+        # inbounds stay per-inbound-only — a sing-box API limitation.)
+        singbox_active: set[str] = set()
+        for tag, rec in singbox_stats["inbounds"].items():
+            ib = inbounds.get(_base_tag(tag))
+            if not (ib and ib.core == "singbox") or not (rec["up"] or rec["down"]):
+                continue
+            solo = [c for c in ib.clients if c.enabled]
+            if len(solo) == 1:
+                c = solo[0]
+                c.up = (c.up or 0) + rec["up"]
+                c.down = (c.down or 0) + rec["down"]
+                singbox_active.add(c.email)
         db.commit()
 
         # Clients with a non-zero delta this poll are still actively
@@ -83,6 +100,7 @@ def _accumulate_once() -> None:
         # used to keep genuinely-active clients from "going offline".
         active_emails = {email for email, rec in xray_stats["users"].items() if rec["up"] or rec["down"]}
         active_emails |= {email for email, rec in singbox_stats["users"].items() if rec["up"] or rec["down"]}
+        active_emails |= singbox_active  # single-client QUIC inbounds that moved data this poll
         _update_ip_limits(db, active_emails)
 
         # Always enforce, even when this poll gathered zero fresh stats (a
