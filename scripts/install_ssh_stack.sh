@@ -155,7 +155,9 @@ if ! [ -x /usr/local/bin/badvpn-udpgw ]; then
   else
     msg "apt badvpn unavailable — building from source (optional)"
     _had_cmake=1; command -v cmake >/dev/null 2>&1 || _had_cmake=0
-    if apt_install cmake gcc make git >/dev/null 2>&1; then
+    # build-essential (not just gcc) — a minimal box has gcc but NOT libc6-dev, so
+    # the linker can't find Scrt1.o/crti.o and even cmake's compiler test fails.
+    if apt_install cmake build-essential git >/dev/null 2>&1; then
       _bv=$(mktemp -d)
       # Pin a known-good commit and verify it — mirroring the checksum-or-refuse
       # policy used for mtg/xray/sing-box — so a moved or compromised upstream
