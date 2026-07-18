@@ -331,6 +331,19 @@ def _binary_available() -> bool:
     return os.path.isfile(settings.xray_bin) and os.access(settings.xray_bin, os.X_OK)
 
 
+def _ensure_certs(config: dict) -> None:
+    """Self-signed fallback for any direct-TLS xray inbound whose cert file is
+    missing, so it works on a domainless box (see services.ensure_selfsigned_cert)."""
+    done: set[str] = set()
+    for ib in config.get("inbounds", []):
+        certs = (((ib.get("streamSettings") or {}).get("tlsSettings") or {}).get("certificates")) or []
+        for c in certs:
+            cert, key = c.get("certificateFile"), c.get("keyFile")
+            if cert and key and cert not in done:
+                done.add(cert)
+                services.ensure_selfsigned_cert(cert, key)
+
+
 def apply(db: Session) -> services.CommandResult:
     """Regenerate, validate, then reload Xray.
 
@@ -341,6 +354,7 @@ def apply(db: Session) -> services.CommandResult:
     sharing the same config file.
     """
     config = generate_config(db)
+    _ensure_certs(config)  # self-signed fallback so direct-TLS inbounds work domainless
     if _binary_available():
         check = validate_config(config)
         if not check.ok:

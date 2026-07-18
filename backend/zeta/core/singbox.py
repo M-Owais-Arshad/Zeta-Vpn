@@ -162,6 +162,19 @@ def _binary_available() -> bool:
     return os.path.isfile(settings.singbox_bin) and os.access(settings.singbox_bin, os.X_OK)
 
 
+def _ensure_certs(config: dict) -> None:
+    """Self-signed fallback for any TLS inbound whose cert file is missing, so
+    Hysteria2/TUIC work on a domainless box instead of failing with "read
+    certificate: no such file or directory" (see services.ensure_selfsigned_cert)."""
+    done: set[str] = set()
+    for ib in config.get("inbounds", []):
+        tls = ib.get("tls") or {}
+        cert, key = tls.get("certificate_path"), tls.get("key_path")
+        if cert and key and cert not in done:
+            done.add(cert)
+            services.ensure_selfsigned_cert(cert, key)
+
+
 def apply(db: Session) -> services.CommandResult:
     """Regenerate, validate, then reload sing-box.
 
@@ -170,6 +183,7 @@ def apply(db: Session) -> services.CommandResult:
     inbound can't silently take down every sing-box listener.
     """
     config = generate_config(db)
+    _ensure_certs(config)  # self-signed fallback so TLS (Hysteria2/TUIC) works domainless
     if not has_singbox_inbounds(db):
         # Nothing to serve; write the (empty) config, then stop AND disable the
         # core so it doesn't idle-waste ~35MB RSS on every reboot of an

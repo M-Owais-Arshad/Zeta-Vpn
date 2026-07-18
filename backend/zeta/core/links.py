@@ -14,6 +14,7 @@ from urllib.parse import quote, urlencode
 
 from ..config import settings
 from ..models import Client, Inbound
+from . import protocols
 
 
 def _b64(data: str) -> str:
@@ -26,6 +27,22 @@ def _b64url(data: str) -> str:
 
 def _address(override: str | None = None) -> str:
     return override or settings.server_domain or settings.server_address or "127.0.0.1"
+
+
+def _address_for(inbound: Inbound, override: str | None = None) -> str:
+    """The host a client should dial for THIS inbound.
+
+    Only nginx-fronted WS-family inbounds (the shared :80/:443 path-routed ones)
+    ride a CDN, so they use the domain. Everything else — REALITY, direct TLS,
+    raw TCP, Hysteria2/TUIC (QUIC/UDP) — needs the RAW origin: a Cloudflare-proxied
+    domain terminates TLS / drops UDP and cannot carry them, which is exactly why
+    REALITY on the domain "fails to connect". Those get the server IP (falling
+    back to the domain, then loopback, only if no IP is configured)."""
+    if override:
+        return override
+    if protocols.is_fronted(inbound.network, inbound.port) and settings.server_domain:
+        return settings.server_domain
+    return settings.server_address or settings.server_domain or "127.0.0.1"
 
 
 def _stream_query(inbound: Inbound) -> dict:
@@ -168,7 +185,7 @@ def client_link(inbound: Inbound, client: Client, address: str | None = None) ->
     builder = _BUILDERS.get(inbound.protocol)
     if builder is None:
         return ""
-    return builder(inbound, client, _address(address))
+    return builder(inbound, client, _address_for(inbound, address))
 
 
 def subscription_for(clients: list[tuple[Inbound, Client]], address: str | None = None) -> str:

@@ -35,15 +35,23 @@ def _parse_link() -> dict:
                     data[k] = v
     except OSError:
         return {}
-    host = settings.server_domain or settings.server_address or ""
+    # MTProto is raw TCP — a Cloudflare-proxied domain can't carry it (CF only
+    # proxies HTTP/WS), so prefer the raw IP; fall back to the domain only if no
+    # IP is set (e.g. an unproxied A record).
+    host = settings.server_address or settings.server_domain or ""
     secret, port = data.get("secret", ""), data.get("port", "")
+    # mtg's FakeTLS secret is "ee" + <32-hex 16-byte key> + <hex SNI>. The tg://
+    # link and modern clients use the full FakeTLS secret, but Telegram's
+    # @MTProxybot and plain clients want just the 32-hex key — expose both.
+    secret_hex = secret[2:34] if secret.lower().startswith("ee") and len(secret) >= 34 else secret
     if not (host and secret and port):
-        return {"host": host, "port": port, "secret": secret, "domain": data.get("domain", ""),
-                "needs_address": not host,
+        return {"host": host, "port": port, "secret": secret, "secret_hex": secret_hex,
+                "domain": data.get("domain", ""), "needs_address": not host,
                 "hint": "Set your server address/domain in Settings to generate the proxy link." if not host else ""}
     q = f"server={host}&port={port}&secret={secret}"
     return {
-        "host": host, "port": port, "secret": secret, "domain": data.get("domain", ""),
+        "host": host, "port": port, "secret": secret, "secret_hex": secret_hex,
+        "domain": data.get("domain", ""),
         "tg_url": f"tg://proxy?{q}",
         "tme_url": f"https://t.me/proxy?{q}",
     }

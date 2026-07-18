@@ -206,6 +206,19 @@ ok "Least-privilege sudo rule installed (/etc/sudoers.d/zetavpn-panel)"
 if [ -n "${ZETA_DOMAIN:-}" ]; then
   ZETA_DOMAIN="$ZETA_DOMAIN" bash "${ZETA_HOME}/scripts/install_ssl.sh" || warn "SSL step failed; continuing without a cert."
 fi
+# Self-signed fallback cert so TLS inbounds (sing-box Hysteria2/TUIC, direct-TLS
+# xray) work even without a domain — without it sing-box refuses with "read
+# certificate: no such file or directory". A real Let's Encrypt cert from the
+# step above overwrites it. QUIC/TLS clients use insecure=1 with this.
+if [ ! -s "${ZETA_CERT_DIR}/fullchain.pem" ]; then
+  msg "Generating a self-signed TLS cert (no domain) so QUIC/TLS inbounds work"
+  mkdir -p "$ZETA_CERT_DIR"
+  openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+    -keyout "${ZETA_CERT_DIR}/privkey.pem" -out "${ZETA_CERT_DIR}/fullchain.pem" \
+    -subj "/CN=$(server_ip)" >/dev/null 2>&1 || warn "self-signed cert generation failed"
+  chown -R zetavpn:zetavpn "$ZETA_CERT_DIR" 2>/dev/null || true
+  chmod 600 "${ZETA_CERT_DIR}/privkey.pem" 2>/dev/null || true
+fi
 # nginx owns :80 (and :443 when a domain+cert is configured) and fronts the
 # panel + WS-family inbounds by path. xray binds every other port directly
 # (REALITY/direct-TLS on 443 when no domain, VLESS-WS on any port, etc.) exactly

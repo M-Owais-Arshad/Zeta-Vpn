@@ -128,3 +128,30 @@ def status_many(units: list[str]) -> dict[str, str]:
         u: (lines[i].strip() if i < len(lines) and lines[i].strip() else "unknown")
         for i, u in enumerate(units)
     }
+
+
+def ensure_selfsigned_cert(cert_path: str, key_path: str) -> bool:
+    """Generate a self-signed cert at the given paths if the cert is missing.
+
+    TLS inbounds (sing-box Hysteria2/TUIC, direct-TLS xray) default their cert to
+    /etc/zetavpn/certs/*, which doesn't exist on a box installed WITHOUT a domain,
+    so the core refuses with "read certificate: no such file or directory" and the
+    protocol is unusable. The panel owns that dir (zetavpn), so it can drop a
+    self-signed cert in place with no privilege escalation; a real Let's Encrypt
+    cert (set via a domain) overwrites it, and QUIC/TLS clients connect with
+    insecure=1. Returns True if a usable cert exists afterwards. Best-effort."""
+    try:
+        if os.path.exists(cert_path) and os.path.getsize(cert_path) > 0:
+            return True
+        cn = settings.server_domain or settings.server_address or "zetavpn.local"
+        os.makedirs(os.path.dirname(cert_path), exist_ok=True)
+        res = run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "3650",
+             "-nodes", "-keyout", key_path, "-out", cert_path, "-subj", f"/CN={cn}"],
+            timeout=30,
+        )
+        if res.ok:
+            os.chmod(key_path, 0o600)
+    except OSError:
+        pass
+    return os.path.exists(cert_path) and os.path.getsize(cert_path) > 0

@@ -821,9 +821,16 @@
     function tgLinks(t) {
       if (t.active && t.needs_address) return '<p class="hint" style="color:var(--warn)">Set your server address/domain in Settings to generate the proxy link.</p>';
       if (!t.active || !t.tme_url) return "";
+      function fld(label, v) {
+        return v ? '<div class="field slim"><label>' + label + '</label><div class="linkbox"><input readonly value="' + esc(v) + '"><button class="btn sm" data-copy="' + esc(v) + '">' + IC.copy + "</button></div></div>" : "";
+      }
       return '<div class="modal-sec">Give this to your users</div>' +
         '<div class="linkbox"><input readonly value="' + esc(t.tme_url) + '"><button class="btn sm" data-copy="' + esc(t.tme_url) + '">' + IC.copy + " Copy</button></div>" +
-        '<a class="btn success block" href="' + esc(t.tme_url) + '" target="_blank" rel="noopener">Open in Telegram</a>';
+        '<a class="btn success block" href="' + esc(t.tme_url) + '" target="_blank" rel="noopener">Open in Telegram</a>' +
+        '<div class="modal-sec">Register with @MTProxybot (or add manually)</div>' +
+        fld("Server", t.host) + fld("Port", t.port) +
+        fld("Secret (32-hex — for @MTProxybot)", t.secret_hex) +
+        '<p class="hint">@MTProxybot wants the 32-hex secret above. Apps that support FakeTLS can use the full link.</p>';
     }
 
     page.innerHTML =
