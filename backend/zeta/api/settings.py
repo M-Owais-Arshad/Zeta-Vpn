@@ -75,6 +75,7 @@ def get_settings(db: Session = Depends(get_db), _: User = Depends(require_admin)
         "ssh_port": ssh_manager.system_ssh_port(),
         "panel_port": app_settings.port,
         "base_path": app_settings.base_path,
+        "version": app_settings.version,
     }
 
 

@@ -229,6 +229,19 @@ case "$action" in
     true
     ;;
 
+  self-update)
+    # zeta-privileged self-update [--full]
+    # Run `zeta update` DETACHED in its own transient systemd unit. The panel
+    # triggers this, but `zeta update` restarts the panel at the end — so it must
+    # NOT run inside the panel's process tree/cgroup (that gets killed on
+    # restart). systemd-run gives it an independent cgroup that survives, logging
+    # progress where the panel can show it.
+    full=""; [ "${1:-}" = "--full" ] && full="--full"
+    mkdir -p /var/log/zetavpn
+    exec systemd-run --collect --quiet \
+      /bin/bash -c "/usr/local/bin/zeta update $full > /var/log/zetavpn/update.log 2>&1"
+    ;;
+
   *)
     die "unknown action: $action"
     ;;

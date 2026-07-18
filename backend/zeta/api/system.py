@@ -148,3 +148,30 @@ def bot_start(_: User = Depends(require_admin)) -> dict:
 @router.post("/bot/stop")
 def bot_stop(_: User = Depends(require_admin)) -> dict:
     return botctl.stop()
+
+
+# --- Panel self-update --------------------------------------------------------
+
+@router.get("/update")
+def update_info(_: User = Depends(require_admin)) -> dict:
+    """Current version + the tail of the last update run (for progress display)."""
+    log = ""
+    try:
+        with open("/var/log/zetavpn/update.log", encoding="utf-8", errors="ignore") as fh:
+            log = "".join(fh.readlines()[-40:])
+    except OSError:
+        pass
+    return {"version": settings.version, "log": log}
+
+
+@router.post("/update")
+def self_update(full: bool = False, _: User = Depends(require_admin)) -> dict:
+    """Pull the latest release from GitHub and apply it (git fetch/reset, reinstall
+    helpers, restart the panel). Runs DETACHED so it survives the panel restart it
+    performs at the end; the UI reloads once the new panel is back up. Default keeps
+    live tunnels (panel-only restart); full=true also re-applies firewall/SSH/nginx."""
+    args = ["self-update"] + (["--full"] if full else [])
+    res = services.run_privileged(args, ["true"], timeout=15)
+    if not res.ok:
+        return {"ok": False, "detail": (res.stderr or res.stdout or "Update could not start").strip()}
+    return {"ok": True, "detail": "Update started — the panel will reload in a moment."}

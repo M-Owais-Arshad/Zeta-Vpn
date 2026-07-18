@@ -1600,7 +1600,13 @@
       '<div class="card pad-lg"><div class="card-head"><h3>SSH server message</h3></div>' +
         '<p class="hint">A custom banner every SSH user sees the moment they connect (before login) — like the "message from server" other tunnel panels show. Applies to OpenSSH, Dropbear, SSL and WebSocket, and updates instantly for new connections. Leave blank for none.</p>' +
         field("Banner text", '<textarea id="st-sshbanner" rows="4" placeholder="Welcome to MyVPN&#10;Telegram: @myvpn">' + esc(s.ssh_banner || "") + "</textarea>") +
-        '<button class="btn primary" id="save-sshbanner">Save banner</button></div>';
+        '<button class="btn primary" id="save-sshbanner">Save banner</button></div>' +
+
+      '<div class="card pad-lg"><div class="card-head"><h3>Panel updates</h3>' +
+        '<span class="badge neutral">v' + esc(s.version || "?") + "</span></div>" +
+        '<p class="hint">Fetch the latest ZetaVPN from GitHub and apply it in one click — your accounts, settings and secrets are kept, and live tunnels stay connected (only the panel reloads). The page refreshes automatically when the new version is up.</p>' +
+        '<button class="btn primary" id="do-update">' + IC.refresh + " Update to latest</button>" +
+        '<label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="upd-full"> Also re-apply firewall / SSH stack / nginx (brief reconnect)</label></div>';
 
     $("#save-srv").onclick = function (ev) {
       busy(ev.currentTarget, async function () {
@@ -1631,6 +1637,28 @@
         try {
           await Z.put("/settings", { ssh_banner: val("#st-sshbanner", page) });
           toast("SSH banner saved — new connections see it immediately");
+        } catch (e) { toast(e.message, "err"); }
+      });
+    };
+    var updBtn = $("#do-update", page);
+    if (updBtn) updBtn.onclick = function () {
+      busy(updBtn, async function () {
+        var full = $("#upd-full", page) && $("#upd-full", page).checked;
+        var ok = await confirmModal({
+          title: "Update panel",
+          message: "Fetch the latest version from GitHub and apply it? Your accounts, settings and secrets are kept" +
+            (full ? ". FULL: firewall / SSH / nginx are re-applied too (users briefly reconnect)." : " and live tunnels stay connected (only the panel reloads).") +
+            " The page reloads automatically when it's done.",
+          confirm: "Update now",
+        });
+        if (!ok) return;
+        try {
+          var r = await Z.post("/system/update" + (full ? "?full=true" : ""));
+          if (r && r.ok === false) { toast(r.detail || "Update couldn't start", "err"); return; }
+          toast("Updating… the panel will reload in ~25s");
+          updBtn.textContent = "Updating… reloading soon";
+          updBtn.disabled = true;
+          setTimeout(function () { location.reload(); }, 25000);
         } catch (e) { toast(e.message, "err"); }
       });
     };
