@@ -235,9 +235,6 @@ SS2022_KEY_BYTES = {
     "2022-blake3-chacha20-poly1305": 32,
 }
 
-# Legacy Shadowsocks ciphers (any password length).
-SS_LEGACY_METHODS = ("aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305")
-
 
 def validate_ss2022_password(method: str, password_b64: str) -> None:
     """Raise ValueError if `password_b64` isn't a valid PSK for `method`.

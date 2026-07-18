@@ -71,7 +71,3 @@ class Bot:
 
 def btn(text: str, data: str) -> dict:
     return {"text": text, "callback_data": data}
-
-
-def url_btn(text: str, url: str) -> dict:
-    return {"text": text, "url": url}

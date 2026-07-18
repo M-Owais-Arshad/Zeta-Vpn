@@ -276,11 +276,6 @@ class SSHAccountOut(BaseModel):
 
 # --- Settings / misc ---------------------------------------------------------
 
-class SettingItem(BaseModel):
-    key: str
-    value: str
-
-
 class ProtocolInfo(BaseModel):
     key: str
     label: str

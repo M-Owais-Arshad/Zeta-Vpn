@@ -110,11 +110,3 @@ apt_install() {
   # Final attempt, verbose, so a genuine (non-transient) failure surfaces.
   DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
 }
-
-systemd_enable_now() {
-  systemctl daemon-reload
-  for unit in "$@"; do
-    systemctl enable "$unit" >/dev/null 2>&1 || true
-    systemctl restart "$unit" || warn "Failed to start $unit"
-  done
-}
