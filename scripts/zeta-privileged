@@ -43,6 +43,19 @@ valid_date_or_none() {
   [ -z "$1" ] || [ "$1" = "-1" ] || [[ "$1" =~ $DATE_RE ]] || die "invalid date: $1"
 }
 
+require_uid_1000() {
+  # DESTRUCTIVE verbs (userdel/usermod-lock/-unlock/chage/pkill) must only ever
+  # touch a real tunnel account (uid >= 1000), never a system account. The
+  # name-based RESERVED denylist is not exhaustive (it omits messagebus,
+  # systemd-resolve, syslog, tcpdump, …), so a contained-compromise panel could
+  # otherwise 'userdel messagebus' or 'pkill syslog' as root = a DoS through the
+  # exact boundary this file defends. Gate on the numeric uid too — the same
+  # floor the chpasswd/killpid arms already enforce.
+  local _u
+  _u="$(id -u -- "$1" 2>/dev/null)" || die "no such user: $1"
+  [ "$_u" -ge 1000 ] || die "refusing system account: $1"
+}
+
 action="${1:-}"
 shift || true
 
@@ -63,18 +76,21 @@ case "$action" in
   userdel)
     username="${1:-}"; [ -n "$username" ] || die "username required"
     valid_username "$username"
+    require_uid_1000 "$username"
     exec userdel -r "$username"
     ;;
 
   usermod-lock)
     username="${1:-}"; [ -n "$username" ] || die "username required"
     valid_username "$username"
+    require_uid_1000 "$username"
     exec usermod -L "$username"
     ;;
 
   usermod-unlock)
     username="${1:-}"; [ -n "$username" ] || die "username required"
     valid_username "$username"
+    require_uid_1000 "$username"
     exec usermod -U "$username"
     ;;
 
@@ -82,6 +98,7 @@ case "$action" in
     username="${1:-}"; expiry="${2:-}"
     [ -n "$username" ] || die "username required"
     valid_username "$username"
+    require_uid_1000 "$username"
     valid_date_or_none "$expiry"
     exec chage -E "${expiry:--1}" "$username"
     ;;
@@ -89,6 +106,7 @@ case "$action" in
   pkill)
     username="${1:-}"; [ -n "$username" ] || die "username required"
     valid_username "$username"
+    require_uid_1000 "$username"
     exec pkill -KILL -u "$username"
     ;;
 
