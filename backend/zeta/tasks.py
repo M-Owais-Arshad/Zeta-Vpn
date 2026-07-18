@@ -12,7 +12,6 @@ full core reload only for protocols/cores without a live user API.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import time
 
@@ -152,10 +151,21 @@ def _accumulate_ssh_traffic(db) -> None:  # noqa: ANN001
     for uid, delta in ssh_manager.traffic_deltas(list(uid_to_acc)).items():
         acc = uid_to_acc.get(uid)
         if acc and delta > 0:
-            acc.used_bytes = (acc.used_bytes or 0) + delta
+            # Atomic DB-side increment (not a Python read-modify-write): the 5s
+            # poller and the /ssh/refresh-traffic endpoint run on separate threads
+            # with separate sessions, and each already captured a DISJOINT delta
+            # under _traffic_lock — but a stale-snapshot "used_bytes = X + delta"
+            # from one would clobber the other's commit, permanently dropping an
+            # interval's bytes. Letting the DB compute the new value avoids that.
+            db.query(SSHAccount).filter(SSHAccount.id == acc.id).update(
+                {SSHAccount.used_bytes: func.coalesce(SSHAccount.used_bytes, 0) + delta},
+                synchronize_session=False,
+            )
             changed = True
     if changed:
         db.commit()
+        for acc in uid_to_acc.values():
+            db.refresh(acc)  # expire_on_commit=False, so refresh for an accurate response
 
 
 def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001
@@ -173,6 +183,13 @@ def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001
     for email, ips in singbox.client_activity().items():
         counts[email] = max(counts.get(email, 0), len(ips))
     now = time.time()
+    # Self-heal: the loop below only visits limit_ip > 0 rows, so a client that was
+    # flagged over-limit and then had its cap lifted (limit_ip set to 0 = unlimited)
+    # would never get the flag cleared and would stay cut off FOREVER — enabled,
+    # unexpired, under quota, uncapped, yet is_usable=False. Clear it here.
+    db.query(Client).filter(
+        Client.limit_ip == 0, Client.ip_limit_exceeded.is_(True)
+    ).update({Client.ip_limit_exceeded: False}, synchronize_session=False)
     for client in db.query(Client).filter(Client.limit_ip > 0).all():
         exceeded = counts.get(client.email, 0) > client.limit_ip
         # HYSTERESIS: flag immediately on exceed, but only CLEAR after the client
@@ -294,14 +311,3 @@ async def stats_loop() -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("stats poll error: %s", exc)
         await asyncio.sleep(settings.stats_poll_seconds)
-
-
-@contextlib.asynccontextmanager
-async def lifespan_tasks():
-    task = asyncio.create_task(stats_loop())
-    try:
-        yield
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task

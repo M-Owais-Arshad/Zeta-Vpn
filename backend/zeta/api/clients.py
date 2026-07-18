@@ -242,6 +242,13 @@ def update_client(
     for field, value in data.items():
         setattr(client, field, value)
 
+    # limit_ip == 0 means "unlimited IPs", so a leftover over-limit flag would keep
+    # is_usable False forever (the poller only clears the flag for limit_ip > 0
+    # rows) — lifting a client's IP cap must not lock them out. Clear it so the
+    # _apply_sync below re-adds the live credential immediately.
+    if client.limit_ip == 0:
+        client.ip_limit_exceeded = False
+
     _flush_or_409(db, client.email)
     _apply_sync(db, ib, client, old_email=old_email)
     db.commit()
