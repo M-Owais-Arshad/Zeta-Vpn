@@ -1275,7 +1275,7 @@
     { label: "Dropbear (alt)", value: function (ip, dom) { return ip + ":143"; } },
     { label: "SSH-over-SSL (stunnel)", value: function (ip, dom) { return ip + ":445"; } },
     { label: "SSH-over-WebSocket (direct)", value: function (ip, dom) { return ip + ":8880"; } },
-    { label: "UDPGW (UDP/gaming — set in the tunnel app)", value: function (ip, dom) { return "127.0.0.1:7300"; } },
+    { label: "UDPGW — enable for Google/QUIC/UDP + gaming (set in the tunnel app)", value: function (ip, dom) { return "127.0.0.1:7300"; } },
     { label: "SSH-WS via CDN (:80, needs a WS payload)", value: function (ip, dom) { return dom + ":80  (path: /zeta-ws, or any)"; } },
     { label: "SSH-WS via CDN over TLS (:443)", value: function (ip, dom) { return dom + ":443  (path: /zeta-ws)"; } },
   ];
@@ -1305,7 +1305,7 @@
       "Dropbear : " + ip + ":109, " + ip + ":143",
       "SSH-SSL  : " + ip + ":445",
       "SSH-WS   : " + ip + ":8880  (direct WebSocket)",
-      "UDPGW    : 127.0.0.1:7300  (set in the tunnel app for UDP/gaming)",
+      "UDPGW    : 127.0.0.1:7300  (enable in the tunnel app — fixes Google/QUIC/UDP + gaming)",
       "",
       "— Via CDN / domain (needs a WebSocket payload) —",
       "SSH-WS   : " + dom + ":80",
