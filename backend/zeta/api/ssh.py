@@ -11,7 +11,7 @@ from .. import auth as auth_lib
 from ..db import get_db
 from ..deps import require_admin
 from ..models import SSHAccount, User
-from ..core import ssh_manager, ssh_info
+from ..core import ssh_manager
 from ..schemas import SSHAccountCreate, SSHAccountOut, SSHAccountUpdate
 
 router = APIRouter()
@@ -133,7 +133,6 @@ def create_account(
     db.add(acc)
     db.commit()
     db.refresh(acc)
-    ssh_info.write_account(db, acc)  # seed the post-auth banner file
     # A just-created system user has no sessions — skip the ps/ss online scans.
     return _to_out(acc, {}, {})
 
@@ -198,7 +197,6 @@ def update_account(
     # else lock + drop sessions. Fixes the chpasswd-clears-lock bypass and keeps
     # the quota memo consistent regardless of which fields changed.
     _reconcile_os_lock(acc)
-    ssh_info.write_account(db, acc)  # reflect the edit in the banner
     return _to_out(acc)
 
 
@@ -214,7 +212,6 @@ def lock_account(
     acc.enabled = False
     db.commit()
     db.refresh(acc)
-    ssh_info.write_account(db, acc)
     # Sessions were just killed — no live IPs to scan for.
     return _to_out(acc, {}, {})
 
@@ -230,7 +227,6 @@ def unlock_account(
     db.commit()
     db.refresh(acc)
     _reconcile_os_lock(acc)  # unlock, or re-lock immediately if still over the cap
-    ssh_info.write_account(db, acc)
     return _to_out(acc)
 
 
@@ -248,7 +244,6 @@ def renew_account(
     ssh_manager.set_expiry(acc.username, acc.expiry_date)
     db.commit()
     db.refresh(acc)
-    ssh_info.write_account(db, acc)
     return _to_out(acc)
 
 
@@ -265,7 +260,6 @@ def reset_traffic(
     # Under cap again -> reconcile lifts any data-cap lock right away (unless the
     # admin has the account disabled), instead of waiting for the next poll.
     _reconcile_os_lock(acc)
-    ssh_info.write_account(db, acc)
     return _to_out(acc)
 
 
@@ -278,7 +272,6 @@ def delete_account(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
     ssh_manager.kill_sessions(acc.username)
     ssh_manager.delete_account(acc.username)
-    ssh_info.remove_info(acc.username)
     db.delete(acc)
     db.commit()
     return {"ok": True}

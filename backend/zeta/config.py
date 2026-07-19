@@ -113,16 +113,6 @@ class Settings(BaseSettings):
     # write it while root-run sshd can read it. install_ssh_stack.sh points the
     # daemons at this exact path.
     ssh_banner_file: Path = Field(default=Path(ZETA_HOME, "data", "ssh-banner.txt"))
-    # Directory of per-account POST-auth banner files. After a tunnel account
-    # authenticates, its login shell (scripts/zeta-tunnel-shell) prints
-    # <ssh_info_dir>/<username>.txt — that account's own live status (data used /
-    # cap / remaining, expiry, days left). The panel (zetavpn) is the only writer;
-    # the wrapper reads it as the UNPRIVILEGED tunnel user. It must therefore live
-    # OUTSIDE ZETA_HOME (which is chmod 0750, so a tunnel user can't even traverse
-    # into it) — a world-traversable /var/lib dir (0755, zetavpn-owned, files
-    # 0644) that carries no secrets, only the per-account summary. Must match the
-    # wrapper's ZETA_INFO_DIR default and install_ssh_stack.sh's SSH_INFO_DIR.
-    ssh_info_dir: Path = Field(default=Path("/var/lib/zeta-ssh-info"))
 
     # --- Traffic accounting --------------------------------------------------
     # How often the cores' stats + access log are polled. Kept short so the

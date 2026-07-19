@@ -34,12 +34,6 @@ _cut_clients: set[int] = set()
 # lock + kill rather than removing one credential from a running core.
 _ssh_cut: set[int] = set()
 
-# Rewrite the per-account SSH banner files (data-used / days-left) at most this
-# often. A tiny write per account, but no need to churn every 5s. A 1-element
-# list (not a rebindable global) so the poll body needs no `global` declaration.
-_banner_refresh_at = [0.0]
-BANNER_REFRESH_INTERVAL = 30.0
-
 # Hysteresis for limit_ip: client_id -> monotonic-ish time it first went back
 # under its IP cap. The flag is only cleared after IP_LIMIT_CLEAR_COOLDOWN of
 # continuous under-limit, so a flapping client can't oscillate the core.
@@ -118,13 +112,6 @@ def _accumulate_once() -> None:
         _enforce_ssh_logins(db)
         _accumulate_ssh_traffic(db)
         _enforce_ssh_quota(db)  # after accumulation, so used_bytes is this poll's freshest
-        # Keep the post-auth banner files fresh (data-used / days-left), throttled.
-        now = time.monotonic()
-        if now - _banner_refresh_at[0] >= BANNER_REFRESH_INTERVAL:
-            from .core import ssh_info
-
-            ssh_info.write_all(db)
-            _banner_refresh_at[0] = now
     finally:
         db.close()
 
