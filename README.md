@@ -32,7 +32,8 @@ together by a FastAPI backend and installed straight from GitHub.
   CDN-friendly) or bind any custom port directly, and a single inbound can listen on several ports
   at once (`extra_ports`) — with an OS-level collision check so it never clashes with nginx/SSH/etc.
 - **Elite gaming tuning — the "Boost" tab.** One click applies a beast-grade low-latency profile
-  (BBR, fair-queue, large socket buffers, tuned conntrack) — every knob is applied only if the
+  (BBR, fq pacing, large socket buffers, MSS clamp, performance CPU governor + data-plane priority)
+  — every knob is applied only if the
   kernel supports it (unsupported ones skip, nothing ever crashes) and turning it off restores the
   box to its exact previous state.
 - **Telegram, built in.** A one-click **MTProto proxy** (mtg, FakeTLS) with a ready-to-share

@@ -126,6 +126,12 @@ write_sysctl_d() {
 apply_live() {
   local IF; IF=$(iface); [ -z "$IF" ] && IF=$(cat "$SNAP/iface.orig" 2>/dev/null)
   load_modules
+  # Regenerate the persisted drop-in from the CURRENT tuning set every time before
+  # sourcing it. This self-heals a stale file left by an older release on an
+  # already-active box (e.g. after 'zeta update' the re-apply / boot-reapply paths
+  # would otherwise keep sourcing knobs this version removed). snapshot() has always
+  # run before the first apply_live, so originals are already captured.
+  write_sysctl_d
   sysctl -p "$SYSCTL_D" >/dev/null 2>&1 || true
   # fq qdisc = BBR's companion pacer (this genuinely helps throughput/latency).
   # We deliberately DON'T bump txqueuelen or add a POSTROUTING MSS clamp here:
@@ -207,8 +213,7 @@ cmd_apply() {
   load_modules
   [ -f "$STATE" ] && { apply_live; echo "already active (re-applied)"; exit 0; }
   snapshot
-  write_sysctl_d
-  apply_live
+  apply_live   # regenerates the sysctl.d drop-in itself (see apply_live)
   write_prio_dropins
   install_boot_unit
   echo active > "$STATE"

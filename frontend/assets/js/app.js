@@ -849,7 +849,7 @@
       '<div class="grid cols-2">' +
       '<div class="card pad-lg" id="tune-card"><div class="card-head"><h3>⚡ Elite Gaming Tuning</h3>' +
         '<span class="badge ' + (tune.active ? "on" : "neutral") + '" id="tune-badge">' + (tune.active ? "Active" : "Off") + "</span></div>" +
-        '<p class="hint">One-tap low-latency tuning for mobile gamers: BBR + fair queueing (kills bufferbloat), bigger TCP/UDP buffers, TCP Fast Open, MSS clamp for 4G/5G, conntrack timeouts, the performance CPU governor and data-plane priority. Turning it off restores the server to its exact previous state.</p>' +
+        '<p class="hint">One-tap low-latency tuning for mobile gamers: BBR + fair queueing (kills bufferbloat), bigger TCP/UDP buffers, TCP Fast Open, MSS clamp for 4G/5G, the performance CPU governor and data-plane priority. Turning it off restores the server to its exact previous state.</p>' +
         '<div class="btn-row" id="tune-actions"></div></div>' +
       '<div class="card pad-lg" id="tg-card"><div class="card-head"><h3>✈️ Telegram Proxy</h3>' +
         '<span class="badge ' + (tg.active ? "on" : "neutral") + '" id="tg-badge">' + (tg.active ? "Active" : "Off") + "</span></div>" +
