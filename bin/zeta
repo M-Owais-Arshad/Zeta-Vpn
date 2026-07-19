@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ZetaVPN command-line manager. Run `zeta` for the interactive menu, or use a
-# subcommand: status | restart | info | update | backup | expire-check | uninstall
+# subcommand: status | restart | info | passwd | update | backup | expire-check | uninstall
 set -euo pipefail
 
 ZETA_HOME="${ZETA_HOME:-/opt/zetavpn}"
@@ -39,8 +39,70 @@ cmd_restart() {
 }
 
 cmd_info() {
-  [ -f "${ZETA_HOME}/.env" ] && grep -E '^ZETA_(PORT|WEB_BASE_PATH|SERVER_ADDRESS|SERVER_DOMAIN|ADMIN_USERNAME)=' "${ZETA_HOME}/.env"
-  [ -f "${ZETA_HOME}/data/initial_admin.txt" ] && { echo; cat "${ZETA_HOME}/data/initial_admin.txt"; }
+  local env="${ZETA_HOME}/.env"
+  if [ ! -r "$env" ]; then
+    warn "Can't read ${env} (root-owned). Run:  sudo zeta info"
+    return 0
+  fi
+  local base port addr dom user host scheme
+  base="$(sed -n 's/^ZETA_WEB_BASE_PATH=//p' "$env" | tail -1)"
+  port="$(sed -n 's/^ZETA_PORT=//p' "$env" | tail -1)"
+  addr="$(sed -n 's/^ZETA_SERVER_ADDRESS=//p' "$env" | tail -1)"
+  dom="$(sed -n 's/^ZETA_SERVER_DOMAIN=//p' "$env" | tail -1)"
+  user="$(sed -n 's/^ZETA_ADMIN_USERNAME=//p' "$env" | tail -1)"
+  host="${dom:-${addr:-<server-ip>}}"; scheme="http"; [ -n "$dom" ] && scheme="https"
+  printf "\n  ${C_BOLD}ZetaVPN panel${C_RESET}\n"
+  printf "  ────────────────────────────────────────────\n"
+  printf "  Panel URL : %s://%s/%s/\n" "$scheme" "$host" "$base"
+  printf "  Username  : %s\n" "${user:-admin}"
+  printf "  Password  : ${C_YEL}stored as a bcrypt hash only${C_RESET} (shown once at install)\n"
+  printf "              lost it?  ${C_BOLD}sudo zeta passwd${C_RESET}  to set a new one\n"
+  printf "  SSH ports : 22 · 109/143 (dropbear) · 445 (SSL) · 8880 (WS)\n"
+  printf "  Config    : %s\n" "$env"
+  printf "  ────────────────────────────────────────────\n\n"
+  [ -f "${ZETA_HOME}/data/initial_admin.txt" ] && { echo "  First-run credentials file:"; sed 's/^/    /' "${ZETA_HOME}/data/initial_admin.txt"; echo; }
+}
+
+cmd_passwd() {
+  # The ONLY panel-password recovery path: the password is stored as a bcrypt
+  # hash (never plaintext) and shown just once at install, so a lost password
+  # would otherwise mean a total lockout. This hashes a new one with the app's
+  # own bcrypt and writes it to the DB, bumping token_version to log out any
+  # existing session.
+  [ "$(id -u)" -eq 0 ] || die "Run as root:  sudo zeta passwd"
+  local user; user="$(sed -n 's/^ZETA_ADMIN_USERNAME=//p' "${ZETA_HOME}/.env" 2>/dev/null | tail -1)"
+  user="${user:-admin}"
+  local p1 p2
+  read -rsp "New panel password for '$user': " p1; echo
+  read -rsp "Retype new password:            " p2; echo
+  [ -n "$p1" ] || die "Password must not be empty."
+  [ "${#p1}" -ge 8 ] || die "Use at least 8 characters."
+  [ "$p1" = "$p2" ] || die "Passwords don't match."
+  # Pipe the password via stdin so it never lands in the process list or history;
+  # run as the panel's own user so the DB (+ any WAL files) stay zetavpn-owned.
+  if printf '%s' "$p1" | sudo -u zetavpn ZETA_HOME="$ZETA_HOME" "${ZETA_HOME}/venv/bin/python" -c '
+import sys, os
+sys.path.insert(0, os.path.join(os.environ.get("ZETA_HOME", "/opt/zetavpn"), "backend"))
+pw = sys.stdin.read()
+target = sys.argv[1]
+from zeta.db import SessionLocal
+from zeta.models import User
+from zeta.auth import hash_password
+db = SessionLocal()
+u = (db.query(User).filter(User.username == target).first()
+     or db.query(User).filter(User.role == "admin").order_by(User.id.asc()).first()
+     or db.query(User).order_by(User.id.asc()).first())
+if u is None:
+    sys.exit("no panel user found in the database")
+u.password_hash = hash_password(pw)
+u.token_version = (u.token_version or 0) + 1
+db.commit()
+print(u.username)
+' "$user"; then
+    ok "Panel password updated — existing sessions logged out. Sign in with the new one."
+  else
+    die "Password reset failed (is the panel installed and the DB present?)."
+  fi
 }
 
 cmd_update() {
@@ -180,11 +242,11 @@ menu() {
     cmd_status
     cat <<MENU
   ${C_BOLD}ZetaVPN manager${C_RESET}
-    1) Restart a service        5) Update ZetaVPN
-    2) Restart everything       6) Backup data + config
-    3) Panel info / credentials 7) Create SSH account (quick)
-    4) Live panel logs          8) Uninstall
-    0) Exit
+    1) Restart a service        6) Backup data + config
+    2) Restart everything       7) Create SSH account (quick)
+    3) Panel info / credentials 8) Reset panel password
+    4) Live panel logs          9) Uninstall
+    5) Update ZetaVPN           0) Exit
 MENU
     read -rp "  Choose: " c
     case "$c" in
@@ -195,7 +257,8 @@ MENU
       5) cmd_update; read -rp "  [enter]" _ ;;
       6) cmd_backup; read -rp "  [enter]" _ ;;
       7) cmd_ssh_create; read -rp "  [enter]" _ ;;
-      8) cmd_uninstall; exit 0 ;;
+      8) cmd_passwd; read -rp "  [enter]" _ ;;
+      9) cmd_uninstall; exit 0 ;;
       0) exit 0 ;;
       *) ;;
     esac
@@ -207,9 +270,10 @@ case "${1:-menu}" in
   status)         cmd_status ;;
   restart)        cmd_restart "${2:-all}" ;;
   info)           cmd_info ;;
+  passwd)         cmd_passwd ;;
   update)         cmd_update "${2:-}" ;;
   backup)         cmd_backup "${2:-}" ;;
   expire-check)   cmd_expire_check ;;
   uninstall)      cmd_uninstall ;;
-  *) echo "Usage: zeta {menu|status|restart [unit]|info|update|backup|expire-check|uninstall}" ;;
+  *) echo "Usage: zeta {menu|status|restart [unit]|info|passwd|update|backup|expire-check|uninstall}" ;;
 esac
