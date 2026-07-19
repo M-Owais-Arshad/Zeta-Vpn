@@ -10,8 +10,8 @@
 #
 # Design goals:
 #   • Everything changed is snapshotted first, so `revert` puts the box back
-#     EXACTLY as it was — sysctls, qdisc, txqueuelen, mangle rules, CPU
-#     governor, and the systemd cgroup weights (incl. the live /run overrides).
+#     EXACTLY as it was — sysctls, qdisc, CPU governor, and the systemd cgroup
+#     weights (incl. the live /run overrides).
 #   • Fully graceful: a sysctl/knob the running kernel doesn't have is silently
 #     skipped, never written, never errored. Nothing here can crash the box or
 #     break connectivity — every step is best-effort ( || true ) and reversible.
@@ -29,26 +29,27 @@ iface() { ip route get 1.1.1.1 2>/dev/null | grep -Po 'dev \K\S+' | head -1; }
 
 # Low-latency tuning set, STABILITY-FIRST (not a max-buffer "beast" profile).
 # Tuned for a small (512MB–1GB) VPS running Xray/sing-box: BBR+fq pacing, TFO,
-# conntrack timeouts that stop the table filling under churn, swappiness low to
-# keep the data plane resident (never 0 — keep an OOM valve).
+# swappiness low to keep the data plane resident (never 0 — keep an OOM valve).
 #
 # ONE SOURCE OF TRUTH: the SHARED network knobs (buffer ceilings/floors, tcp_rmem/
 # tcp_wmem, somaxconn, notsent_lowat, backlogs) use EXACTLY the values the base
 # install already applies in scripts/tune_bbr.sh — the boost never silently
-# re-sizes a buffer differently from the baseline. It only ADDS gaming-specific
-# knobs on top (conntrack timeouts, UDP floors, tw_reuse/fin_timeout, swappiness,
-# rmem/wmem_default) plus the live non-sysctl bits (fq qdisc, txqueuelen, MSS
-# clamp, CPU governor, cgroup priority). Buffer CEILINGS stay a moderate 16MB
-# (not 64MB) and the per-socket UDP floor a gentle 64KB: oversized buffers are
-# the classic cause of the "spikes then drops" sawtooth and waste RAM across
-# thousands of flows. 16MB saturates any realistic VPS link, butter-smooth.
+# re-sizes a buffer differently from the baseline. It only ADDS a few gaming-
+# specific knobs on top (UDP floors, tw_reuse/fin_timeout, swappiness) plus the
+# live non-sysctl bits that actually help under load (fq pacing qdisc, CPU
+# governor, cgroup priority). Buffer CEILINGS stay a moderate 16MB (not 64MB) and
+# the per-socket UDP floor a gentle 64KB: oversized buffers are the classic cause
+# of the "spikes then drops" sawtooth and waste RAM across thousands of flows.
+# 16MB saturates any realistic VPS link, butter-smooth.
+#
+# DELIBERATELY NOT HERE (audited out — hurt more than helped): nf_conntrack
+# timeout overrides + rmem_default/wmem_default below stock + a deep txqueuelen +
+# a POSTROUTING MSS clamp on the wrong leg. See load_modules()/apply_live().
 TUNING_SYSCTLS=(
   "net.ipv4.tcp_congestion_control = bbr"
   "net.core.default_qdisc = fq"
   "net.core.rmem_max = 16777216"
   "net.core.wmem_max = 16777216"
-  "net.core.rmem_default = 131072"
-  "net.core.wmem_default = 131072"
   "net.ipv4.tcp_rmem = 4096 87380 16777216"
   "net.ipv4.tcp_wmem = 4096 65536 16777216"
   "net.ipv4.udp_rmem_min = 65536"
@@ -65,9 +66,6 @@ TUNING_SYSCTLS=(
   "net.ipv4.tcp_tw_reuse = 1"
   "net.ipv4.tcp_fin_timeout = 15"
   "vm.swappiness = 10"
-  "net.netfilter.nf_conntrack_tcp_timeout_established = 7200"
-  "net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30"
-  "net.netfilter.nf_conntrack_tcp_timeout_close_wait = 30"
 )
 
 # Snapshot keys are DERIVED from the set above, so every key we ever set is also
@@ -75,16 +73,17 @@ TUNING_SYSCTLS=(
 SYSCTL_KEYS=()
 for _kv in "${TUNING_SYSCTLS[@]}"; do SYSCTL_KEYS+=("${_kv%% *}"); done
 
-# Best-effort load of the modules whose sysctls we tune (nf_conntrack exposes
-# the timeout keys; tcp_bbr the congestion control). Missing = harmless skip.
+# Best-effort load of tcp_bbr (the congestion control we set). Missing = harmless
+# skip. (We no longer touch nf_conntrack — its timeout tweaks were removed because
+# adding connection tracking to a pure userspace relay can drop packets under
+# high churn, which HURT stability under the exact load Boost is meant to help.)
 load_modules() {
-  modprobe nf_conntrack 2>/dev/null || true
   modprobe tcp_bbr 2>/dev/null || true
 }
 
 snapshot() {
   mkdir -p "$SNAP/dropins"
-  load_modules   # so conntrack keys exist and their originals get recorded
+  load_modules   # so the tcp_bbr key exists and its original gets recorded
   local IF; IF=$(iface); echo "${IF:-eth0}" > "$SNAP/iface.orig"
   # sysctl originals as "key = value" lines so revert is `sysctl -p`.
   : > "$SNAP/sysctl.orig"
@@ -93,11 +92,10 @@ snapshot() {
     v=$(sysctl -n "$k" 2>/dev/null) || continue   # key absent -> skip gracefully
     printf '%s = %s\n' "$k" "$v" >> "$SNAP/sysctl.orig"
   done
-  [ -n "$IF" ] && {
-    tc qdisc show dev "$IF" root 2>/dev/null > "$SNAP/qdisc.orig" || true
-    cat "/sys/class/net/$IF/tx_queue_len" 2>/dev/null > "$SNAP/txqlen.orig" || true
-  }
-  iptables-save -t mangle 2>/dev/null > "$SNAP/mangle.orig" || true
+  # Only qdisc is snapshotted here — it's the one live netdev knob Boost changes
+  # (root fq). txqueuelen and the mangle MSS rule are no longer touched by Boost,
+  # so there's nothing of ours to record/restore for them.
+  [ -n "$IF" ] && tc qdisc show dev "$IF" root 2>/dev/null > "$SNAP/qdisc.orig" || true
   { local g
     for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
       [ -r "$g" ] && echo "$(cat "$g")"
@@ -129,15 +127,13 @@ apply_live() {
   local IF; IF=$(iface); [ -z "$IF" ] && IF=$(cat "$SNAP/iface.orig" 2>/dev/null)
   load_modules
   sysctl -p "$SYSCTL_D" >/dev/null 2>&1 || true
+  # fq qdisc = BBR's companion pacer (this genuinely helps throughput/latency).
+  # We deliberately DON'T bump txqueuelen or add a POSTROUTING MSS clamp here:
+  #   - a deep txqueuelen (2000) adds bufferbloat -> ping sawtooth/jitter under load;
+  #   - the client-facing MSS clamp already lives in base tune_bbr.sh (--set-mss on
+  #     the ingress leg), and a POSTROUTING --clamp-mss-to-pmtu only saw the server's
+  #     own 1500 MTU, so it was a no-op on the wrong leg.
   [ -n "$IF" ] && tc qdisc replace dev "$IF" root fq 2>/dev/null || true
-  if [ -n "$IF" ]; then
-    # Terminating userspace proxy re-originates connections, so we only clamp the
-    # server->origin leg, and to the REAL path MTU (adaptive, not a fixed guess).
-    # No FORWARD rule — nothing is kernel-forwarded here, so it could never match.
-    iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IF" -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
-    iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IF" -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
-    ip link set dev "$IF" txqueuelen 2000 2>/dev/null || true
-  fi
   # CPU governor = performance (no-op on KVM guests with no cpufreq)
   local g
   for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
@@ -230,13 +226,7 @@ cmd_revert() {
     # several); default fq_codel if unknown.
     local kind; kind=$(awk 'NR==1{print $2}' "$SNAP/qdisc.orig" 2>/dev/null); [ -z "$kind" ] && kind=fq_codel
     tc qdisc replace dev "$IF" root "$kind" 2>/dev/null || tc qdisc del dev "$IF" root 2>/dev/null || true
-    local txq; txq=$(cat "$SNAP/txqlen.orig" 2>/dev/null); [ -n "$txq" ] && ip link set dev "$IF" txqueuelen "$txq" 2>/dev/null || true
-    # Remove exactly the MSS rule we add (belt-and-suspenders if mangle.orig was
-    # empty at snapshot), so a blanket restore isn't the only safety net.
-    while iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -o "$IF" -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; do :; done
   fi
-  # exact mangle-table restore
-  [ -f "$SNAP/mangle.orig" ] && iptables-restore -T mangle < "$SNAP/mangle.orig" 2>/dev/null || true
   # CPU governor back
   if [ -f "$SNAP/governor.orig" ]; then
     local i=0 g v
