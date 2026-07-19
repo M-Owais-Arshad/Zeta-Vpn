@@ -37,11 +37,13 @@ grep -qxF '/usr/sbin/nologin' /etc/shells 2>/dev/null || echo '/usr/sbin/nologin
 # session so port-forwarding stays up. It NEVER runs a command. Port-forwarding
 # (`ssh -N`) doesn't invoke the login shell at all, so this can't break tunnelling.
 BANNER_SHELL=/usr/local/sbin/zeta-tunnel-shell
-SSH_INFO_DIR="${ZETA_HOME:-/opt/zetavpn}/data/ssh-info"
+# Banner files MUST live OUTSIDE ZETA_HOME: install.sh does `chmod 0750 $ZETA_HOME`,
+# so an unprivileged tunnel user can't even traverse into it to reach its file.
+# /var/lib is world-traversable; the dir is zetavpn-owned 0755 (panel writes) with
+# 0644 files (tunnel user reads). Keep in sync with config.ssh_info_dir + the shell.
+SSH_INFO_DIR=/var/lib/zeta-ssh-info
 if [ -f "${HERE}/zeta-tunnel-shell" ]; then
   install -m 0755 "${HERE}/zeta-tunnel-shell" "$BANNER_SHELL"
-  # Bake the real info dir into the installed shell (covers a custom ZETA_HOME).
-  sed -i "s#/opt/zetavpn/data/ssh-info#${SSH_INFO_DIR}#g" "$BANNER_SHELL"
   grep -qxF "$BANNER_SHELL" /etc/shells 2>/dev/null || echo "$BANNER_SHELL" >> /etc/shells
   mkdir -p "$SSH_INFO_DIR"
   chown zetavpn:zetavpn "$SSH_INFO_DIR" 2>/dev/null || true

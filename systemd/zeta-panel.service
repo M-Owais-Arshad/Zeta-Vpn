@@ -17,6 +17,11 @@ ExecStart=/opt/zetavpn/venv/bin/python -m zeta.main
 Restart=always
 RestartSec=3
 LimitNOFILE=1000000
+# systemd creates + owns /var/lib/zeta-ssh-info (0755, zetavpn:zetavpn) on every
+# start, so the panel can write each SSH account's post-auth banner file there and
+# the unprivileged tunnel login shell — which can't traverse the 0750 ZETA_HOME —
+# can read its own. Absolute path is /var/lib/<name>; matches config.ssh_info_dir.
+StateDirectory=zeta-ssh-info
 # The panel runs as the unprivileged 'zetavpn' user (install.sh creates it and
 # chowns the dirs it writes: ZETA_HOME, /usr/local/etc/xray, /etc/sing-box).
 # The few genuinely-privileged jobs it still needs — managing SSH tunnel
