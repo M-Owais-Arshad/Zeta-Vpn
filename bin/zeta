@@ -153,7 +153,13 @@ cmd_update() {
   if [ "$full" = 1 ]; then
     warn "Full update: re-applying system config (firewall/SSH/nginx) — users reconnect"
     ZETA_YES=1 bash "${ZETA_HOME}/install.sh" --yes
-    ok "Full update complete${new_rev:+ ($new_rev)}"
+    # install.sh only `enable --now`s the panel, which is a NO-OP for an already-
+    # running service — so on a --full update the OLD panel process keeps running
+    # against a not-yet-migrated schema (new DB columns never get added, new code
+    # never loads). Restart it explicitly, exactly like the panel-only path below.
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl restart zeta-panel 2>/dev/null || true
+    ok "Full update complete${new_rev:+ ($new_rev)} — panel reloaded"
     return 0
   fi
 
