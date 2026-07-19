@@ -113,6 +113,13 @@ class Settings(BaseSettings):
     # write it while root-run sshd can read it. install_ssh_stack.sh points the
     # daemons at this exact path.
     ssh_banner_file: Path = Field(default=Path(ZETA_HOME, "data", "ssh-banner.txt"))
+    # Directory of per-account POST-auth banner files. After a tunnel account
+    # authenticates, its login shell (scripts/zeta-tunnel-shell) prints
+    # <ssh_info_dir>/<username>.txt — that account's own live status (data used /
+    # cap / remaining, expiry, days left). The panel is the only writer; the
+    # wrapper only reads its own file. Must match the wrapper's ZETA_INFO_DIR
+    # default (install_ssh_stack.sh bakes this path into the installed shell).
+    ssh_info_dir: Path = Field(default=Path(ZETA_HOME, "data", "ssh-info"))
 
     # --- Traffic accounting --------------------------------------------------
     # How often the cores' stats + access log are polled. Kept short so the

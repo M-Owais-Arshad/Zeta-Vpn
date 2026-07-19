@@ -941,6 +941,15 @@
     var quota = fmtBytes(used) + " / " + (c.total_bytes ? fmtBytes(c.total_bytes) : "∞");
     return quota + (pct != null ? '<div class="progress mini' + (pct >= 85 ? " crit" : pct >= 60 ? " warn" : "") + '"><span style="width:' + pct + '%"></span></div>' : "");
   }
+  // Same used/limit bar as clients, for SSH accounts (used_bytes is one total,
+  // total_bytes is the cap; 0 = unlimited).
+  function sshUsageCell(a) {
+    var used = a.used_bytes || 0;
+    var cap = a.total_bytes || 0;
+    var pct = cap ? Math.min(100, Math.round((used / cap) * 100)) : null;
+    var txt = fmtBytes(used) + " / " + (cap ? fmtBytes(cap) : "∞");
+    return txt + (pct != null ? '<div class="progress mini' + (pct >= 85 ? " crit" : pct >= 60 ? " warn" : "") + '"><span style="width:' + pct + '%"></span></div>' : "");
+  }
   function clientRow(c, ib, showInbound) {
     var cred = c.uuid || c.password || "";
     return "<tr>" +
@@ -1384,14 +1393,16 @@
     var rows = list.map(function (a) {
       var online = sshOnlineBadge(a);
       return "<tr>" +
-        '<td><span class="badge ' + (a.enabled ? "on" : "off") + '">' + (a.enabled ? "Active" : "Locked") + "</span></td>" +
+        '<td><span class="badge ' + (a.enabled ? "on" : "off") + '">' + (a.enabled ? "Active" : "Locked") + "</span>" +
+          (a.is_quota_exceeded ? ' <span class="badge warn" data-tip="Data cap reached — locked until traffic is reset or the cap is raised">Quota</span>' : "") + "</td>" +
         "<td><b>" + esc(a.username) + "</b>" + (a.comment ? '<span class="sub">' + esc(a.comment) + "</span>" : "") + "</td>" +
         "<td>" + a.max_login + "</td>" +
         '<td data-live-on="' + a.id + '">' + online + "</td>" +
-        '<td class="mono" data-live-tr="' + a.id + '">' + fmtBytes(a.used_bytes || 0) + "</td>" +
+        '<td data-live-tr="' + a.id + '">' + sshUsageCell(a) + "</td>" +
         "<td>" + (a.expiry_date ? fmtExpiry(new Date(a.expiry_date).getTime()) : '<span class="muted">Never</span>') + "</td>" +
         '<td class="actions">' +
           '<button class="icon-btn success" data-info="' + a.id + '" data-tip="Connection info" aria-label="Connection info">' + IC.link + "</button>" +
+          '<button class="icon-btn" data-edit="' + a.id + '" data-tip="Edit" aria-label="Edit">' + IC.edit + "</button>" +
           '<button class="icon-btn" data-renew="' + a.id + '" data-tip="Renew" aria-label="Renew">' + IC.cal + "</button>" +
           '<button class="icon-btn" data-resettr="' + a.id + '" data-tip="Reset traffic" aria-label="Reset traffic">' + IC.refresh + "</button>" +
           '<button class="icon-btn warn" data-lock="' + a.id + '" data-en="' + a.enabled + '" data-tip="' + (a.enabled ? "Lock" : "Unlock") + '" aria-label="' + (a.enabled ? "Lock" : "Unlock") + '">' + IC.power + "</button>" +
@@ -1407,7 +1418,7 @@
       "</div></div>" +
       (list.length
         ? '<div class="table-wrap"><table>' +
-          '<thead><tr><th>Status</th><th>Username</th><th>Max login</th><th>Online</th><th>Traffic</th><th>Expiry</th><th class="right">Actions</th></tr></thead><tbody>' + rows + "</tbody></table></div>"
+          '<thead><tr><th>Status</th><th>Username</th><th>Max login</th><th>Online</th><th>Usage</th><th>Expiry</th><th class="right">Actions</th></tr></thead><tbody>' + rows + "</tbody></table></div>"
         : emptyState(IC.terminal, "No SSH accounts yet",
             "SSH accounts work with HTTP Injector / HTTP Custom-style tunnelling apps over OpenSSH, Dropbear, SSL and WebSocket.",
             '<button class="btn primary" id="empty-add">' + IC.plus + " Create your first account</button>")) +
@@ -1433,6 +1444,12 @@
       b.onclick = function () {
         var a = list.find(function (x) { return x.id == b.dataset.info; });
         if (a) sshInfoModal(a, null);
+      };
+    });
+    page.querySelectorAll("[data-edit]").forEach(function (b) {
+      b.onclick = function () {
+        var a = list.find(function (x) { return x.id == b.dataset.edit; });
+        if (a) sshModal(a);
       };
     });
     page.querySelectorAll("[data-renew]").forEach(function (b) {
@@ -1506,7 +1523,7 @@
       list = fresh;
       fresh.forEach(function (a) {
         var tc = page.querySelector('[data-live-tr="' + a.id + '"]');
-        if (tc) tc.textContent = fmtBytes(a.used_bytes || 0);
+        if (tc) tc.innerHTML = sshUsageCell(a);
         var oc = page.querySelector('[data-live-on="' + a.id + '"]');
         if (oc) oc.innerHTML = sshOnlineBadge(a);
       });
@@ -1568,19 +1585,25 @@
     return out;
   }
 
-  function sshModal() {
+  function sshModal(existing) {
+    var isEdit = !!existing;
+    var gb0 = isEdit ? Math.round((existing.total_bytes || 0) / 1073741824 * 100) / 100 : 0;
     var mo = modal({
-      title: "Add SSH account",
+      title: isEdit ? "Edit · " + existing.username : "Add SSH account",
       body:
         '<div class="row">' +
-        field("Username", '<input id="s-user" placeholder="user01" autocomplete="off">') +
-        field("Password", '<div class="linkbox"><span class="input-wrap"><input id="s-pass" type="password" placeholder="••••••" autocomplete="new-password"><button type="button" class="in-btn icon-btn" data-eye data-tip="Show / hide" aria-label="Show password">' + IC.eye + '</button></span><button class="btn sm" type="button" data-genpass>Generate</button></div>') +
+        field("Username", '<input id="s-user" placeholder="user01" autocomplete="off"' + (isEdit ? ' value="' + esc(existing.username) + '" readonly' : "") + ">", isEdit ? "Username can't be changed" : "") +
+        field("Password", '<div class="linkbox"><span class="input-wrap"><input id="s-pass" type="password" placeholder="' + (isEdit ? "leave blank to keep" : "••••••") + '" autocomplete="new-password"><button type="button" class="in-btn icon-btn" data-eye data-tip="Show / hide" aria-label="Show password">' + IC.eye + '</button></span><button class="btn sm" type="button" data-genpass>Generate</button></div>', isEdit ? "Only set to change the current password" : "") +
         "</div>" +
         '<div class="row">' +
-        field("Max login", '<input id="s-max" type="number" min="0" value="1">', "How many devices may connect at once") +
-        field("Expiry (days)", '<input id="s-days" type="number" min="0" value="30">', "0 = never expires") + "</div>" +
-        field("Comment", '<input id="s-comment" placeholder="optional">'),
-      foot: '<button class="btn ghost" data-cancel>Cancel</button><button class="btn primary" data-save>Create</button>',
+        field("Max login", '<input id="s-max" type="number" min="0" value="' + (isEdit ? existing.max_login : 1) + '">', "How many devices may connect at once") +
+        field("Data limit (GB)", '<input id="s-gb" type="number" min="0" step="0.5" value="' + gb0 + '">', "0 = unlimited") +
+        "</div>" +
+        '<div class="row">' +
+        field("Expiry (days)", '<input id="s-days" type="number" min="0" value="' + (isEdit ? "" : "30") + '"' + (isEdit ? ' placeholder="unchanged"' : "") + ">", isEdit ? "Set to re-anchor expiry from today · 0 = never" : "0 = never expires") +
+        field("Comment", '<input id="s-comment" placeholder="optional" value="' + (isEdit ? esc(existing.comment || "") : "") + '">') +
+        "</div>",
+      foot: '<button class="btn ghost" data-cancel>Cancel</button><button class="btn primary" data-save>' + (isEdit ? "Save" : "Create") + "</button>",
     });
     var pass = $("#s-pass", mo.root);
     $("[data-eye]", mo.root).onclick = function () {
@@ -1590,18 +1613,42 @@
       pass.value = genPassword();
       pass.type = "text";
     };
+    // Track whether the admin actually touched the cap / expiry, so an EDIT only
+    // sends them when changed — expiry re-anchors from now, so sending an
+    // untouched value would silently shift the date. Mirrors clientModal.
+    var gbDirty = false, daysDirty = false;
+    $("#s-gb", mo.root).oninput = function () { gbDirty = true; };
+    $("#s-days", mo.root).oninput = function () { daysDirty = true; };
     $("[data-cancel]", mo.foot).onclick = mo.close;
     $("[data-save]", mo.foot).onclick = function (ev) {
       busy(ev.currentTarget, async function () {
         // isNaN (not ||) so an explicit 0 survives: 0 max_login = no session
-        // cap, 0 expiry days = never expires — both backend-supported.
+        // cap, 0 GB = unlimited, 0 expiry days = never expires.
         var maxL = parseInt($("#s-max", mo.root).value, 10);
         var expD = parseInt($("#s-days", mo.root).value, 10);
+        var gb = parseFloat($("#s-gb", mo.root).value);
+        if (isEdit) {
+          var patch = {
+            max_login: isNaN(maxL) ? existing.max_login : maxL,
+            comment: val("#s-comment", mo.root),
+          };
+          if (pass.value) patch.password = pass.value;
+          if (gbDirty) patch.total_gb = isNaN(gb) ? 0 : gb;
+          if (daysDirty) patch.expiry_days = isNaN(expD) ? 0 : expD;
+          try {
+            await Z.patch("/ssh/" + existing.id, patch);
+            mo.close();
+            toast('"' + existing.username + '" updated');
+            reload();
+          } catch (e) { toast(e.message, "err"); }
+          return;
+        }
         var payload = {
           username: val("#s-user", mo.root),
           password: pass.value,
           max_login: isNaN(maxL) ? 1 : maxL,
           expiry_days: isNaN(expD) ? 30 : expD,
+          total_gb: isNaN(gb) ? 0 : gb,
           comment: val("#s-comment", mo.root),
         };
         if (!payload.username || !payload.password) { toast("Username and password are required", "err"); return; }

@@ -28,6 +28,18 @@ log = logging.getLogger("zeta.tasks")
 # Clients we've already cut off, so we don't reload the core repeatedly.
 _cut_clients: set[int] = set()
 
+# SSH accounts we've already locked for exceeding their data cap, so we don't
+# re-run usermod/pkill every poll. Mirrors _cut_clients — but an SSH account is a
+# real OS user with no live-credential API, so enforcement is an explicit
+# lock + kill rather than removing one credential from a running core.
+_ssh_cut: set[int] = set()
+
+# Rewrite the per-account SSH banner files (data-used / days-left) at most this
+# often. A tiny write per account, but no need to churn every 5s. A 1-element
+# list (not a rebindable global) so the poll body needs no `global` declaration.
+_banner_refresh_at = [0.0]
+BANNER_REFRESH_INTERVAL = 30.0
+
 # Hysteresis for limit_ip: client_id -> monotonic-ish time it first went back
 # under its IP cap. The flag is only cleared after IP_LIMIT_CLEAR_COOLDOWN of
 # continuous under-limit, so a flapping client can't oscillate the core.
@@ -105,6 +117,14 @@ def _accumulate_once() -> None:
         _enforce_limits(db)
         _enforce_ssh_logins(db)
         _accumulate_ssh_traffic(db)
+        _enforce_ssh_quota(db)  # after accumulation, so used_bytes is this poll's freshest
+        # Keep the post-auth banner files fresh (data-used / days-left), throttled.
+        now = time.monotonic()
+        if now - _banner_refresh_at[0] >= BANNER_REFRESH_INTERVAL:
+            from .core import ssh_info
+
+            ssh_info.write_all(db)
+            _banner_refresh_at[0] = now
     finally:
         db.close()
 
@@ -176,6 +196,47 @@ def _accumulate_ssh_traffic(db) -> None:  # noqa: ANN001
         db.commit()
         for acc in uid_to_acc.values():
             db.refresh(acc)  # expire_on_commit=False, so refresh for an accurate response
+
+
+def _enforce_ssh_quota(db) -> None:  # noqa: ANN001
+    """Lock + drop any enabled SSH account that has crossed its data cap
+    (``total_bytes``), and unlock it again once it's back under the cap (traffic
+    reset or the cap raised). ``enabled`` stays the admin's on/off intent; the OS
+    lock is a separate quota-driven layer, exactly like a client's live cut.
+
+    Restart-safe: the in-memory ``_ssh_cut`` memo only suppresses repeat
+    usermod/pkill calls — the actual heal (unlock) also happens synchronously at
+    the two action points that can move an account from over->under cap
+    (reset-traffic and raising the cap in the PATCH edit), so a memo emptied by a
+    panel restart can never leave an account stuck locked. Best-effort:
+    ssh_manager.* no-ops on a non-root/dev box."""
+    from .core import ssh_manager
+    from .models import SSHAccount
+
+    capped = (
+        db.query(SSHAccount)
+        .filter(SSHAccount.total_bytes > 0, SSHAccount.enabled.is_(True))
+        .all()
+    )
+    # Forget memo entries for accounts disabled/deleted/uncapped since we cut
+    # them, so a reused SQLite rowid can't masquerade as a still-cut account.
+    _ssh_cut.intersection_update({a.id for a in capped})
+    for acc in capped:
+        # Re-read this row so the lock decision uses the freshest usage: without
+        # it, a reset-traffic / cap-raise that committed on the request thread
+        # AFTER the query above (but before this check) would be read stale and
+        # could transiently re-lock + kill a just-freed account for one poll.
+        db.refresh(acc)
+        over = acc.is_quota_exceeded
+        if over and acc.id not in _ssh_cut:
+            ssh_manager.lock(acc.username)
+            ssh_manager.kill_sessions(acc.username)
+            _ssh_cut.add(acc.id)
+            log.info("SSH account %s locked: data cap reached", acc.username)
+        elif not over and acc.id in _ssh_cut:
+            ssh_manager.unlock(acc.username)
+            _ssh_cut.discard(acc.id)
+            log.info("SSH account %s unlocked: back under data cap", acc.username)
 
 
 def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001

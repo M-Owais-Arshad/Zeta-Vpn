@@ -1,0 +1,47 @@
+#!/bin/sh
+# ZetaVPN — tunnel login shell for SSH-VPN accounts.
+# ZetaVPN by Muhammad Owais · (c) 2026 · AGPL-3.0
+#
+# Set as the login shell of every SSH tunnelling account (replaces /bin/false).
+# Its ONLY two jobs are:
+#   1. print that account's per-user info banner on connect (post-auth), and
+#   2. hold the session open so the client's port-forwarding channels stay up.
+#
+# It NEVER executes a command. sshd/dropbear invoke a login shell as
+#   shell -c "<cmd>"      (for `ssh user@host <cmd>`)
+# — we IGNORE all arguments, so an account can only ever see its OWN banner and
+# tunnel. No command execution, no interactive shell, no path to another
+# account's data. This is the intentional, tightly-scoped replacement for the
+# old /bin/false: it adds a friendly per-user banner without granting a shell.
+#
+# Security notes:
+#   • Arguments are never looked at, so `-c "<anything>"` cannot run.
+#   • A fixed PATH is set so command lookup can't be redirected.
+#   • Only the caller's OWN file (keyed off `id -un`) is read — never a path the
+#     client can influence.
+#   • It ends with `exec sleep`, so the process literally becomes sleep: there is
+#     nothing left that could interpret input or spawn anything.
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+INFO_DIR="${ZETA_INFO_DIR:-/opt/zetavpn/data/ssh-info}"
+user="$(id -un 2>/dev/null)"
+[ -n "$user" ] || user="${USER:-user}"
+info="${INFO_DIR}/${user}.txt"
+
+if [ -r "$info" ]; then
+  cat -- "$info"
+else
+  # Panel hasn't rendered this account's file yet (brand-new account, or a fresh
+  # box before the first stats cycle). Show a minimal, honest placeholder.
+  printf '\n  ZetaVPN\n  Account: %s\n  Status : active\n  (full account details are being prepared — reconnect in a moment)\n\n' "$user"
+fi
+
+# Hold the session channel open so the tunnel's forwarding channels stay up while
+# the banner is displayed. No stdin is read (nothing interactive); the client
+# disconnecting sends SIGHUP and ends the wait. `sleep infinity` is GNU coreutils
+# (the Debian/Ubuntu target); fall back to a ~68-year sleep on a busybox `sleep`
+# that rejects "infinity". NOT `exec`ed: once exec replaces this process the `||`
+# fallback could never run, so a non-GNU sleep would fail to hold the session.
+sleep infinity 2>/dev/null || sleep 2147483647

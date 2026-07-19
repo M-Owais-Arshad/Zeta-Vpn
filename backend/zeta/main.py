@@ -41,6 +41,11 @@ async def lifespan(app: FastAPI):
         ensure_admin(db)
         seed_settings(db)
         load_into_settings(db)
+        # Seed each SSH account's post-auth banner file so existing accounts get
+        # one immediately after an upgrade (the poller keeps them fresh after).
+        from .core import ssh_info
+
+        ssh_info.write_all(db)
     finally:
         db.close()
 

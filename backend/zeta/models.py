@@ -228,7 +228,17 @@ class SSHAccount(Base):
     # by the stats poller — SSH tunnelling has no per-direction stats API like
     # Xray, so this is one total.
     used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    # Data cap in bytes (0 = unlimited), mirroring Client.total_bytes. When
+    # used_bytes >= total_bytes the stats poller locks + kills the OS account
+    # (tasks._enforce_ssh_quota); reset-traffic or raising the cap re-enables it.
+    total_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+
+    @property
+    def is_quota_exceeded(self) -> bool:
+        if not self.total_bytes:
+            return False
+        return (self.used_bytes or 0) >= self.total_bytes
 
 
 class AuditLog(Base):

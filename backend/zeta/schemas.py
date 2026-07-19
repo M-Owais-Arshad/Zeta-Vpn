@@ -242,6 +242,7 @@ class SSHAccountCreate(BaseModel):
     password: str = Field(min_length=1, max_length=128)
     max_login: int = Field(default=1, ge=0)
     expiry_days: int = Field(default=30, ge=0)
+    total_gb: float = Field(default=0, ge=0)  # data cap in gigabytes (0 = unlimited)
     comment: str = ""
 
     @field_validator("username", "password")
@@ -251,6 +252,25 @@ class SSHAccountCreate(BaseModel):
         # (or NUL) in either field lets the value inject an extra line and
         # rewrite an arbitrary account's password (e.g. root's).
         return _reject_control_chars(v, info.field_name)
+
+
+class SSHAccountUpdate(BaseModel):
+    """Partial edit of an existing SSH account (mirrors ClientUpdate). Only the
+    fields the admin actually changed are sent; unset fields are left as-is."""
+
+    password: str | None = Field(default=None, min_length=1, max_length=128)
+    max_login: int | None = Field(default=None, ge=0)
+    total_gb: float | None = Field(default=None, ge=0)  # data cap (GB); 0 = unlimited
+    expiry_days: int | None = Field(default=None, ge=0)  # re-anchor expiry N days from now; 0 = never
+    enabled: bool | None = None
+    comment: str | None = None
+
+    @field_validator("password")
+    @classmethod
+    def _validate_password(cls, v: str | None) -> str | None:
+        if v is not None:
+            _reject_control_chars(v, "password")
+        return v
 
 
 class SSHAccountOut(BaseModel):
@@ -268,6 +288,10 @@ class SSHAccountOut(BaseModel):
     # Total bytes relayed by this account (up + down combined — raw SSH has no
     # per-direction stats). Accumulated from per-uid iptables counters.
     used_bytes: int = 0
+    # Data cap in bytes (0 = unlimited) + the computed over-cap flag, so the UI
+    # can render a used/limit bar and a "quota exceeded" badge like clients do.
+    total_bytes: int = 0
+    is_quota_exceeded: bool = False
     online: int = 0
     # Source IPs of currently-connected sessions (direct OpenSSH/Dropbear).
     # May be shorter than `online` — SSL/WS sessions don't expose a real IP.

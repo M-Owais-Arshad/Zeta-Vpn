@@ -30,6 +30,45 @@ apt_install openssh-server dropbear stunnel4 net-tools
 # ---- OpenSSH: allow tunnelling, permit the /bin/false shell for tunnel-only users
 grep -qxF '/bin/false' /etc/shells 2>/dev/null || echo '/bin/false' >> /etc/shells
 grep -qxF '/usr/sbin/nologin' /etc/shells 2>/dev/null || echo '/usr/sbin/nologin' >> /etc/shells
+
+# ---- ZetaVPN tunnel login shell (post-auth per-user banner) ----
+# Replaces /bin/false for tunnel accounts: on connect it prints the account's own
+# status file (data used / cap / remaining, expiry, days left) then holds the
+# session so port-forwarding stays up. It NEVER runs a command. Port-forwarding
+# (`ssh -N`) doesn't invoke the login shell at all, so this can't break tunnelling.
+BANNER_SHELL=/usr/local/sbin/zeta-tunnel-shell
+SSH_INFO_DIR="${ZETA_HOME:-/opt/zetavpn}/data/ssh-info"
+if [ -f "${HERE}/zeta-tunnel-shell" ]; then
+  install -m 0755 "${HERE}/zeta-tunnel-shell" "$BANNER_SHELL"
+  # Bake the real info dir into the installed shell (covers a custom ZETA_HOME).
+  sed -i "s#/opt/zetavpn/data/ssh-info#${SSH_INFO_DIR}#g" "$BANNER_SHELL"
+  grep -qxF "$BANNER_SHELL" /etc/shells 2>/dev/null || echo "$BANNER_SHELL" >> /etc/shells
+  mkdir -p "$SSH_INFO_DIR"
+  chown zetavpn:zetavpn "$SSH_INFO_DIR" 2>/dev/null || true
+  chmod 755 "$SSH_INFO_DIR"
+  # Migrate existing Zeta SSH accounts (read from the panel DB) onto the banner
+  # shell. Root context here, so plain usermod works and targets exactly the
+  # accounts the panel manages. Best-effort — never abort the install.
+  VENV_PY="${ZETA_HOME:-/opt/zetavpn}/venv/bin/python"
+  if [ -x "$VENV_PY" ]; then
+    accounts=$(ZETA_HOME="${ZETA_HOME:-/opt/zetavpn}" "$VENV_PY" - 2>/dev/null <<'PY' || true
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["ZETA_HOME"], "backend"))
+try:
+    from zeta.db import SessionLocal
+    from zeta.models import SSHAccount
+    print("\n".join(n for (n,) in SessionLocal().query(SSHAccount.username).all()))
+except Exception:
+    pass
+PY
+)
+    for u in $accounts; do
+      usermod -s "$BANNER_SHELL" "$u" 2>/dev/null || true
+    done
+  fi
+  ok "ZetaVPN tunnel banner shell installed"
+fi
+
 mkdir -p /etc/ssh/sshd_config.d
 # Filename sorts BEFORE cloud-image drop-ins (e.g. 60-cloudimg-settings.conf).
 # sshd uses the FIRST obtained value per keyword, so `PasswordAuthentication yes`

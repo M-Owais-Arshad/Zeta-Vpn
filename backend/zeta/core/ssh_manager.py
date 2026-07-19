@@ -8,6 +8,7 @@ instead of raising.
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 from datetime import date, datetime
@@ -29,9 +30,21 @@ _RESERVED = {
 }
 _USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{2,31}$")
 
-# A shell that permits SSH port-forwarding/tunnelling but grants no interactive
-# session — the standard setup for SSH-VPN accounts.
-_TUNNEL_SHELL = "/bin/false"
+# Login shell for tunnel accounts. Preferred: the ZetaVPN banner shell, which
+# prints the account's per-user status on connect then holds the session open for
+# forwarding (installed + existing accounts migrated by install_ssh_stack.sh). If
+# it isn't installed yet (panel updated but the SSH stack not re-run), fall back
+# to /bin/false — a plain `ssh -N` never invokes the login shell, so tunnelling
+# works either way; only the banner is absent until the stack is re-run.
+_BANNER_SHELL = "/usr/local/sbin/zeta-tunnel-shell"
+_FALLBACK_SHELL = "/bin/false"
+
+
+def tunnel_shell() -> str:
+    """The login shell new tunnel accounts get: the banner shell if installed,
+    else /bin/false. Resolved per-call so a fresh SSH-stack install is picked up
+    without restarting the panel."""
+    return _BANNER_SHELL if os.path.exists(_BANNER_SHELL) else _FALLBACK_SHELL
 
 
 def system_ssh_port() -> int:
@@ -79,9 +92,11 @@ def create_account(
     username: str,
     password: str,
     expiry: date | datetime | None = None,
-    shell: str = _TUNNEL_SHELL,
+    shell: str | None = None,
 ) -> services.CommandResult:
     validate_username(username)
+    if shell is None:
+        shell = tunnel_shell()
     exp = _fmt_expiry(expiry)
     direct_cmd = ["useradd", "-m", "-s", shell]
     if exp:

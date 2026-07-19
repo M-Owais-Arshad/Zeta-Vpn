@@ -11,10 +11,12 @@ from .. import auth as auth_lib
 from ..db import get_db
 from ..deps import require_admin
 from ..models import SSHAccount, User
-from ..core import ssh_manager
-from ..schemas import SSHAccountCreate, SSHAccountOut
+from ..core import ssh_manager, ssh_info
+from ..schemas import SSHAccountCreate, SSHAccountOut, SSHAccountUpdate
 
 router = APIRouter()
+
+_GB = 1024 ** 3  # gigabyte in bytes — same convention as clients (api/clients.py)
 
 
 def _to_out(
@@ -28,6 +30,51 @@ def _to_out(
     sessions = online_sessions if online_sessions is not None else ssh_manager.online_sessions()
     out.online_ips = sessions.get(acc.username, [])
     return out
+
+
+def _drop_quota_cut(account_id: int) -> None:
+    """Forget a data-cap lock memo entry (in tasks._ssh_cut) after we've manually
+    unlocked an account here, so the background poller doesn't believe it's still
+    cut. Lazy import avoids a load-time cycle; best-effort."""
+    try:
+        from ..tasks import _ssh_cut
+
+        _ssh_cut.discard(account_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _add_quota_cut(account_id: int) -> None:
+    """Record that we've OS-locked this account for exceeding its cap, matching
+    the poller's memo (tasks._ssh_cut) so it won't repeat the lock. Best-effort."""
+    try:
+        from ..tasks import _ssh_cut
+
+        _ssh_cut.add(account_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _reconcile_os_lock(acc) -> None:  # noqa: ANN001
+    """Bring the OS user's lock state (and the quota memo) in line with the
+    account's intended state after a mutation: it may authenticate ONLY when it is
+    enabled AND under its data cap — anything else means ``usermod -L`` + drop live
+    sessions. Re-asserting here in ONE place is essential because a password change
+    (``chpasswd``) rewrites the shadow field and thereby clears a ``usermod -L``
+    lock, and because unlocking an over-cap account must not strand a stale memo
+    entry that would stop the poller re-locking it."""
+    if (not acc.enabled) or acc.is_quota_exceeded:
+        ssh_manager.lock(acc.username)
+        ssh_manager.kill_sessions(acc.username)
+        # Enabled-but-over-cap is the poller's "cut" state; keep the memo in sync
+        # so _enforce_ssh_quota doesn't redundantly re-lock every poll.
+        if acc.enabled and acc.is_quota_exceeded:
+            _add_quota_cut(acc.id)
+        else:
+            _drop_quota_cut(acc.id)
+    else:
+        ssh_manager.unlock(acc.username)
+        _drop_quota_cut(acc.id)
 
 
 @router.get("", response_model=list[SSHAccountOut])
@@ -79,14 +126,80 @@ def create_account(
         password=body.password,  # stored so the owner can view/copy it later
         max_login=body.max_login,
         expiry_date=expiry,
+        total_bytes=int(body.total_gb * _GB),  # data cap (0 = unlimited)
         comment=body.comment,
         enabled=True,
     )
     db.add(acc)
     db.commit()
     db.refresh(acc)
+    ssh_info.write_account(db, acc)  # seed the post-auth banner file
     # A just-created system user has no sessions — skip the ps/ss online scans.
     return _to_out(acc, {}, {})
+
+
+@router.patch("/{account_id}", response_model=SSHAccountOut)
+def update_account(
+    account_id: int,
+    body: SSHAccountUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> SSHAccountOut:
+    """Edit an existing SSH account in one place (mirrors clients' PATCH). Only
+    the fields the admin actually changed are applied, and each change is kept in
+    sync with the OS user: password -> chpasswd, expiry -> chage, enable/disable
+    -> usermod -U/-L (+ kill sessions on disable). The GB cap / max_login /
+    comment are plain column updates; the stats poller enforces them."""
+    acc = db.get(SSHAccount, account_id)
+    if acc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+
+    data = body.model_dump(exclude_unset=True)
+
+    # Password -> reset the OS user's password, refresh hash + stored plaintext.
+    if data.get("password") is not None:
+        pw = data.pop("password")
+        res = ssh_manager.set_password(acc.username, pw)
+        if not res.ok:
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"password change failed: {res.stderr}")
+        acc.password_hash = auth_lib.hash_password(pw)
+        acc.password = pw
+    else:
+        data.pop("password", None)
+
+    # GB cap -> bytes (0 = unlimited).
+    if "total_gb" in data:
+        acc.total_bytes = int((data.pop("total_gb") or 0) * _GB)
+
+    # Expiry -> re-anchor N days from now (0 = never), and keep the OS user in
+    # sync so a lapsed date actually blocks login. Mirrors client edit semantics
+    # (absolute re-anchor), distinct from the additive /renew endpoint.
+    if "expiry_days" in data:
+        days = data.pop("expiry_days")
+        acc.expiry_date = (datetime.now(timezone.utc) + timedelta(days=days)) if days else None
+        ssh_manager.set_expiry(acc.username, acc.expiry_date)
+
+    # Enable/disable is applied as a flag here; the actual OS lock is reconciled
+    # once at the end (a password change above cleared any usermod -L, so the lock
+    # state must be re-asserted in a single place after ALL fields are applied).
+    if "enabled" in data:
+        acc.enabled = data.pop("enabled")
+
+    # Remaining plain columns: max_login, comment. Skip an explicit null so a
+    # `{"comment": null}` body can't hit the NOT NULL column (500) — an unset
+    # field simply keeps its current value.
+    for key, value in data.items():
+        if value is not None:
+            setattr(acc, key, value)
+
+    db.commit()
+    db.refresh(acc)
+    # Single source of truth for the OS lock: enabled AND under-cap -> unlock,
+    # else lock + drop sessions. Fixes the chpasswd-clears-lock bypass and keeps
+    # the quota memo consistent regardless of which fields changed.
+    _reconcile_os_lock(acc)
+    ssh_info.write_account(db, acc)  # reflect the edit in the banner
+    return _to_out(acc)
 
 
 @router.post("/{account_id}/lock", response_model=SSHAccountOut)
@@ -101,6 +214,7 @@ def lock_account(
     acc.enabled = False
     db.commit()
     db.refresh(acc)
+    ssh_info.write_account(db, acc)
     # Sessions were just killed — no live IPs to scan for.
     return _to_out(acc, {}, {})
 
@@ -112,10 +226,11 @@ def unlock_account(
     acc = db.get(SSHAccount, account_id)
     if acc is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
-    ssh_manager.unlock(acc.username)
     acc.enabled = True
     db.commit()
     db.refresh(acc)
+    _reconcile_os_lock(acc)  # unlock, or re-lock immediately if still over the cap
+    ssh_info.write_account(db, acc)
     return _to_out(acc)
 
 
@@ -133,6 +248,7 @@ def renew_account(
     ssh_manager.set_expiry(acc.username, acc.expiry_date)
     db.commit()
     db.refresh(acc)
+    ssh_info.write_account(db, acc)
     return _to_out(acc)
 
 
@@ -146,6 +262,10 @@ def reset_traffic(
     acc.used_bytes = 0
     db.commit()
     db.refresh(acc)
+    # Under cap again -> reconcile lifts any data-cap lock right away (unless the
+    # admin has the account disabled), instead of waiting for the next poll.
+    _reconcile_os_lock(acc)
+    ssh_info.write_account(db, acc)
     return _to_out(acc)
 
 
@@ -158,6 +278,7 @@ def delete_account(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
     ssh_manager.kill_sessions(acc.username)
     ssh_manager.delete_account(acc.username)
+    ssh_info.remove_info(acc.username)
     db.delete(acc)
     db.commit()
     return {"ok": True}
