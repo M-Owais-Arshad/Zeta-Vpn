@@ -44,8 +44,9 @@ cmd_info() {
     warn "Can't read ${env} (root-owned). Run:  sudo zeta info"
     return 0
   fi
-  local base port addr dom user host scheme
+  local base port addr dom user host scheme ws
   base="$(sed -n 's/^ZETA_WEB_BASE_PATH=//p' "$env" | tail -1)"
+  ws="$(sed -n 's/^ZETA_WS_PORT=//p' "$env" | tail -1)"; ws="${ws:-8880}"
   port="$(sed -n 's/^ZETA_PORT=//p' "$env" | tail -1)"
   addr="$(sed -n 's/^ZETA_SERVER_ADDRESS=//p' "$env" | tail -1)"
   dom="$(sed -n 's/^ZETA_SERVER_DOMAIN=//p' "$env" | tail -1)"
@@ -57,7 +58,7 @@ cmd_info() {
   printf "  Username  : %s\n" "${user:-admin}"
   printf "  Password  : ${C_YEL}stored as a bcrypt hash only${C_RESET} (shown once at install)\n"
   printf "              lost it?  ${C_BOLD}sudo zeta passwd${C_RESET}  to set a new one\n"
-  printf "  SSH ports : 22 · 109/143 (dropbear) · 445 (SSL) · 8880 (WS)\n"
+  printf "  SSH ports : 22 · 109/143 (dropbear) · 445 (SSL) · %s (WS)\n" "$ws"
   printf "  Config    : %s\n" "$env"
   printf "  ────────────────────────────────────────────\n\n"
   [ -f "${ZETA_HOME}/data/initial_admin.txt" ] && { echo "  First-run credentials file:"; sed 's/^/    /' "${ZETA_HOME}/data/initial_admin.txt"; echo; }
@@ -153,13 +154,17 @@ cmd_update() {
   if [ "$full" = 1 ]; then
     warn "Full update: re-applying system config (firewall/SSH/nginx) — users reconnect"
     ZETA_YES=1 bash "${ZETA_HOME}/install.sh" --yes
-    # install.sh only `enable --now`s the panel, which is a NO-OP for an already-
-    # running service — so on a --full update the OLD panel process keeps running
-    # against a not-yet-migrated schema (new DB columns never get added, new code
-    # never loads). Restart it explicitly, exactly like the panel-only path below.
+    # install.sh only `enable --now`s services, which is a NO-OP for an already-
+    # running unit — so on a --full update the OLD panel process keeps running
+    # against a not-yet-migrated schema, AND upgraded core binaries (install_xray/
+    # singbox.sh overwrite /usr/local/bin/*) + the ws-proxy code stay dormant.
+    # Restart them explicitly (--full already warns users reconnect). try-restart
+    # only touches ACTIVE units, so a disabled sing-box on an Xray-only box is left
+    # alone.
     systemctl daemon-reload 2>/dev/null || true
     systemctl restart zeta-panel 2>/dev/null || true
-    ok "Full update complete${new_rev:+ ($new_rev)} — panel reloaded"
+    systemctl try-restart zeta-xray zeta-singbox zeta-ws 2>/dev/null || true
+    ok "Full update complete${new_rev:+ ($new_rev)} — panel + cores reloaded"
     return 0
   fi
 

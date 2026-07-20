@@ -101,7 +101,12 @@ def _apply_sync(db: Session, ib: Inbound, client: Client, old_email: str | None 
     """Re-sync ONE edited client on the live core with no restart when supported:
     drop its old entry, then re-add it only if it's still enabled+usable. Falls
     back to a full apply() otherwise or on any failure."""
-    if xray.supports_live_user_ops(ib):
+    # Validate the resulting config BEFORE touching the live core: a rejected edit
+    # must not fire remove_user_live below and then leave the user disconnected
+    # when _apply()'s reload rolls back. Only take the fast no-restart path when the
+    # edited config actually validates; otherwise fall to _apply (which cleanly
+    # rolls back + 422 without having removed anything from the running core).
+    if xray.supports_live_user_ops(ib) and xray.validate_config(xray.generate_config(db)).ok:
         if xray.remove_user_live(ib, old_email or client.email).ok:
             if not (client.enabled and client.is_usable):
                 xray.persist_config(db)
@@ -246,8 +251,12 @@ def update_client(
     if "expiry_days" in data:
         days = data.pop("expiry_days")
         client.expiry_time = int((time.time() + days * 86400) * 1000) if days and days > 0 else 0
+    # Skip an explicit JSON null: model_dump(exclude_unset) still includes a field
+    # sent as null, and setattr-ing None onto a NOT NULL column (email/flow/comment/
+    # sub_id/enabled/limit_ip) would 500. A null just means "leave unchanged".
     for field, value in data.items():
-        setattr(client, field, value)
+        if value is not None:
+            setattr(client, field, value)
 
     # limit_ip == 0 means "unlimited IPs", so a leftover over-limit flag would keep
     # is_usable False forever (the poller only clears the flag for limit_ip > 0

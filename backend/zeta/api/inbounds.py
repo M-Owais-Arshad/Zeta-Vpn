@@ -72,7 +72,13 @@ def _apply_or_422(db: Session, core: str) -> None:
 
 
 def _ws_path(network: str, stream_settings: dict) -> str:
-    return ((stream_settings or {}).get(network) or {}).get("path", "").strip()
+    # stream_settings is admin-supplied and unvalidated (bare dict), so a non-dict
+    # network block or non-string path must not crash (500) — treat as no path.
+    block = (stream_settings or {}).get(network)
+    if not isinstance(block, dict):
+        return ""
+    path = block.get("path", "")
+    return path.strip() if isinstance(path, str) else ""
 
 
 def _flush_or_409(db: Session, port: int, tag: str, fronted: bool, ws_path: str | None) -> None:
@@ -193,7 +199,9 @@ def _seed_reality(stream: dict) -> dict:
 
 def _seed_ss_key(settings_block: dict) -> dict:
     block = dict(settings_block or {})
-    method = block.get("method", "2022-blake3-aes-128-gcm")
+    # method is admin-supplied and unvalidated — coerce to str so a non-string
+    # value can't crash .startswith (500 instead of a clean handling).
+    method = str(block.get("method", "2022-blake3-aes-128-gcm"))
     if method.startswith("2022") and not block.get("password"):
         key_bytes = protocols.SS2022_KEY_BYTES.get(method, 16)
         block["password"] = base64.b64encode(os.urandom(key_bytes)).decode("ascii")
@@ -345,8 +353,12 @@ def update_inbound(
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
+    # Skip an explicit JSON null: exclude_unset still includes a null-valued field,
+    # and setattr-ing None onto a NOT NULL column (remark/network/listen/...) would
+    # 500. A null just means "leave unchanged".
     for field, value in data.items():
-        setattr(ib, field, value)
+        if value is not None:
+            setattr(ib, field, value)
 
     is_ws = protocols.is_ws_family(ib.network)
     fronted = protocols.is_fronted(ib.network, ib.port)

@@ -28,7 +28,12 @@ ACME="${ACME_HOME}/acme.sh"
 NGINX_WAS_ACTIVE=0
 if systemctl is-active --quiet nginx; then NGINX_WAS_ACTIVE=1; systemctl stop nginx; fi
 
-if "$ACME" --issue -d "$DOMAIN" --standalone --keylength ec-256 --force; then
+# No --force: acme.sh skips re-issue when the cert isn't due (exit 2), so a re-run
+# (zeta update --full) becomes a no-op instead of re-minting a still-valid cert and
+# burning Let's Encrypt's 5-per-week duplicate-certificate quota. Treat 0 (issued/
+# renewed) and 2 (skipped, still valid) as success — both refresh the local copy.
+rc=0; "$ACME" --issue -d "$DOMAIN" --standalone --keylength ec-256 || rc=$?
+if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
   mkdir -p "$ZETA_CERT_DIR"
   # zeta-xray/zeta-singbox run as the unprivileged 'zetavpn' user and need to
   # read these files. acme.sh's cron renewal re-runs as root and would reset

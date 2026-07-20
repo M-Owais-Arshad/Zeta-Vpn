@@ -86,12 +86,13 @@ def apply_replace(db: Session, ib: Inbound, client: Client, *,
         # clients._apply_add.
         if removed_ok and client.enabled and client.is_usable and xray.add_user_live(ib, client).ok:
             xray.persist_config(db)
-            # The old client's DB row is already deleted, but if it lived on a
-            # DIFFERENT core (e.g. a sing-box Hysteria2/TUIC inbound) that core
-            # still serves the now-deleted credential — a live, unmetered "ghost"
-            # user — until it's regenerated. Reconcile it before returning (the
-            # xray-live path above never reaches the fallback's reload).
-            if old_ib is not None and old_ib is not ib and old_ib.core != ib.core:
+            # The old client's DB row is already deleted, but its old inbound may
+            # still serve the credential as a live, unmetered "ghost" user until
+            # regenerated. Any old_ib still set here SURVIVED step 1, i.e. it's
+            # NOT live-capable (a sing-box Hysteria2/TUIC inbound, OR a same-core
+            # xray Shadowsocks/socks/http inbound), so a full reload of ITS core is
+            # the only way to purge it — regardless of whether its core matches ib.
+            if old_ib is not None and old_ib is not ib:
                 apply_core(db, old_ib)
             return
     # Fallback: full reload of the affected core(s).

@@ -53,6 +53,12 @@ def load_into_settings(db: Session) -> None:
     for row in db.query(Setting).all():
         if row.key in _LIVE_MIRROR and row.value:
             setattr(app_settings, row.key, row.value)
+    # The sing-box Clash-API secret is persisted (seeded once, NOT admin-editable):
+    # load the stored value so the in-memory secret matches what the running core
+    # holds on disk — keeping QUIC stats + quota working across every restart.
+    secret = db.get(Setting, "singbox_clash_api_secret")
+    if secret and secret.value:
+        setattr(app_settings, "singbox_clash_api_secret", secret.value)
     # Re-seed the on-disk SSH banner from the DB, so the message survives a
     # reinstall / fresh checkout (which recreates an empty banner file) without
     # the admin having to re-save it.

@@ -101,6 +101,15 @@ def change_password(
 def totp_setup(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> TotpSetup:
     from ..core.links import qr_data_url
 
+    # Refuse to re-provision while 2FA is already enabled: login authenticates
+    # against user.totp_secret whenever totp_enabled is set, so overwriting it here
+    # would make an UNVERIFIED new secret the live login secret immediately and can
+    # lock the admin out. Disable 2FA first to re-provision.
+    if user.totp_enabled:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "2FA is already enabled — disable it first to set up a new authenticator.",
+        )
     secret = auth_lib.new_totp_secret()
     user.totp_secret = secret  # stored but not active until verified/enabled
     db.commit()

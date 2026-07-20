@@ -53,6 +53,11 @@ def seed_settings(db: Session) -> None:
         "server_address": settings.server_address,
         "server_domain": settings.server_domain,
         "brand": settings.brand,
+        # Persist the sing-box Clash-API secret so it stays STABLE across panel
+        # restarts. Otherwise each panel process picks a fresh random secret while
+        # the running sing-box keeps the old one from its on-disk config, so every
+        # stats poll gets 401 and QUIC (Hysteria2/TUIC) usage + quota silently stop.
+        "singbox_clash_api_secret": settings.singbox_clash_api_secret,
     }
     for key, value in defaults.items():
         if db.get(Setting, key) is None:

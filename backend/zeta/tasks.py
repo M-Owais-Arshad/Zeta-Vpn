@@ -234,10 +234,12 @@ def _update_ip_limits(db, active_emails: set[str]) -> None:  # noqa: ANN001
     ``is_usable`` change the same way it already does for quota/expiry.
     """
     counts = access_log.poll_concurrent_ips(active_emails)
-    # Merge sing-box's per-user IP snapshot (Hysteria2/TUIC) — its clients are
-    # invisible to Xray's access log, so without this their limit_ip cap would
-    # be a silent no-op. singbox.client_activity() is the same read-only,
-    # window-filtered {email: [ip,...]} shape.
+    # Merge sing-box's per-user IP snapshot (Hysteria2/TUIC). NOTE: current sing-box's
+    # Clash API exposes NO per-user field on a connection, so client_activity()
+    # returns {} today and limit_ip is effectively UNENFORCED for QUIC (traffic +
+    # data-quota still work via single-client attribution; the concurrent-IP cap does
+    # not). This merge is a forward-compat hook that starts working automatically if a
+    # future sing-box adds per-user metadata — no code change needed.
     for email, ips in singbox.client_activity().items():
         counts[email] = max(counts.get(email, 0), len(ips))
     now = time.time()

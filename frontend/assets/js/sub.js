@@ -6,7 +6,21 @@
   function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
   function fmtBytes(n){n=Number(n)||0;if(n<1024)return n+" B";var u=["KB","MB","GB","TB"],i=-1;do{n/=1024;i++;}while(n>=1024&&i<u.length-1);return n.toFixed(1)+" "+u[i];}
   function toast(m){var r=document.getElementById("toast-root");var t=document.createElement("div");t.className="toast ok";t.textContent=m;r.appendChild(t);setTimeout(function(){t.remove();},2600);}
-  function copy(t){navigator.clipboard.writeText(t).then(function(){toast("Copied");});}
+  function copy(t){
+    function ok(){toast("Copied");}
+    function fail(){toast("Select the text and copy manually");}
+    // Clipboard API only works in a secure context (HTTPS/localhost); on a
+    // plain-http portal (common before TLS is set up) it's unavailable, so fall
+    // back to the hidden-textarea + execCommand trick (mirrors app.js copy()).
+    if (window.isSecureContext && navigator.clipboard) { navigator.clipboard.writeText(t).then(ok, fail); return; }
+    try {
+      var ta=document.createElement("textarea");
+      ta.value=t; ta.style.position="fixed"; ta.style.left="-9999px"; ta.style.opacity="0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      var s=document.execCommand("copy"); document.body.removeChild(ta);
+      s?ok():fail();
+    } catch(e){ fail(); }
+  }
 
   var id = new URLSearchParams(location.search).get("id");
   if (!id) { root.innerHTML = '<div class="card"><div class="empty">Missing subscription id.</div></div>'; return; }

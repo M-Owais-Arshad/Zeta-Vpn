@@ -25,7 +25,7 @@ _traffic_lock = threading.Lock()
 _RESERVED = {
     "root", "admin", "administrator", "daemon", "bin", "sys", "sync", "games",
     "man", "lp", "mail", "news", "uucp", "proxy", "www-data", "backup", "list",
-    "nobody", "systemd-network", "sshd", "zeta", "ubuntu", "debian",
+    "nobody", "systemd-network", "sshd", "zeta", "zetavpn", "ubuntu", "debian",
 }
 _USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{2,31}$")
 

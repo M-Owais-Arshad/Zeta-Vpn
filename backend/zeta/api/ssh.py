@@ -181,8 +181,12 @@ def update_account(
     # Enable/disable is applied as a flag here; the actual OS lock is reconciled
     # once at the end (a password change above cleared any usermod -L, so the lock
     # state must be re-asserted in a single place after ALL fields are applied).
-    if "enabled" in data:
+    # Guard None like the loop below — a {"enabled": null} body would otherwise hit
+    # the NOT NULL column and 500.
+    if data.get("enabled") is not None:
         acc.enabled = data.pop("enabled")
+    else:
+        data.pop("enabled", None)
 
     # Remaining plain columns: max_login, comment. Skip an explicit null so a
     # `{"comment": null}` body can't hit the NOT NULL column (500) — an unset

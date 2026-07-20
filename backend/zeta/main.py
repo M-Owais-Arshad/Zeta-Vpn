@@ -41,6 +41,18 @@ async def lifespan(app: FastAPI):
         ensure_admin(db)
         seed_settings(db)
         load_into_settings(db)
+        # Re-sync the sing-box config once at startup so a box upgraded from a
+        # build that used a per-process random Clash secret gets its on-disk
+        # config rewritten with the now-persisted secret (apply() is a no-op when
+        # nothing changed). Scoped to boxes that actually run sing-box.
+        try:
+            from .models import Inbound
+            from .core import singbox
+
+            if db.query(Inbound.id).filter(Inbound.core == "singbox").first():
+                singbox.apply(db)
+        except Exception:  # noqa: BLE001
+            log.warning("startup sing-box re-sync skipped")
     finally:
         db.close()
 
